@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Lanzador del sintetizador. uv resuelve el entorno y lo corre.
+cd "$(dirname "$0")" && exec uv run synth.py "$@"

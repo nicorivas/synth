@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+# artefactos de prueba (regenerables con los test_*.py)
+ui.svg
+ui.png
+demo.wav
