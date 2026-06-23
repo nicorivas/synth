@@ -48,18 +48,137 @@ mientras el sistema repite la tecla y se suelta ~0.4 s después (constante
 tecla rápida en macOS (Ajustes → Teclado → *Velocidad de repetición* alta y
 *Retardo* corto).
 
+## Componer en vivo (sin tocar el piano)
+
+El piano y el secuenciador son para tocar a mano. Pero también se puede componer
+**escribiendo un archivo** y oyéndolo recargarse en caliente, sin reiniciar:
+
+```
+./play canciones/primera.json     # lo suena por los parlantes
+```
+
+`player.py` vigila ese archivo (una "foto" en JSON, el mismo formato que los
+presets: basta el bloque `sequencer` con el `bpm` y la grilla de 6 pistas × 16
+pasos, cada celda `null` o una nota midi) y cada vez que lo guardas vuelve a
+sonar con el cambio. Para revisar una pieza **sin** tarjeta de audio —que suene
+algo, que no sature, qué alturas tiene— está el render fuera de línea:
+
+```
+uv run render.py canciones/primera.json 4 render.wav   # -> WAV + análisis
+```
+
+Así nació este flujo: Kichoro escribe el archivo y revisa por números (FFT,
+nivel); una persona con oídos lo escucha en vivo y le va diciendo cómo suena.
+
+### Canciones largas: patrones + arreglo
+
+Una grilla sola es un compás que se repite. Para piezas largas hay dos niveles
+(como un *tracker*): **patrones** con nombre y un **arreglo** (`order`) que los
+encadena. La canción suena los patrones en ese orden y vuelve a empezar; con
+pocos patrones reusados se arman minutos de música, y reordenar la pieza es solo
+cambiar la lista `order` —sin tocar los patrones.
+
+```jsonc
+{
+  "bpm": 100,
+  "patterns": {            // cada patrón: 6 pistas (lead,bajo,pad,kick,snare,hat);
+    "A": [ ... ],          // pueden tener distinto largo (8, 16, 32…)
+    "B": [ ... ],
+    "fill": [ ... ]
+  },
+  "order": ["A", "A", "B", "B", "fill"]   // el arreglo = la canción
+}
+```
+
+`canciones/cancion.json` es un ejemplo completo en La menor (intro, groove, un
+*lift* y un relleno). El formato viejo de un solo patrón (`sequencer.grid`) sigue
+cargando igual.
+
+### Dinámica y groove de la percusión
+
+Para que la batería no suene tiesa, una celda puede llevar **velocity** además de
+la nota — `[nota, vel]` con `vel` en 0..1 — y así se escriben acentos y *ghost
+notes*. Un `"swing"` (0..0.7) atrasa el contratiempo y le da balanceo. El kit son
+7 voces: kick, redoble, **hat cerrado y abierto** (el cerrado *ahoga* al abierto,
+como un charles real). `canciones/percusion.json` lo muestra todo.
+
+```jsonc
+{
+  "bpm": 96,
+  "swing": 0.5,                       // groove: atrasa los 16avos pares
+  "patterns": {
+    "groove": [
+      // … kick con acento y ghost: golpe fuerte, luego flojito
+      [[36, 1.0], null, null, null, null, null, [36, 0.45], null, … ]
+    ]
+  },
+  "order": ["groove"]
+}
+```
+
+### Notas largas (aliento)
+
+Por defecto cada nota dura un paso y se suelta en el siguiente —de ahí que todo
+suene picado. Para que una nota *respire* —el arco largo de una cuerda— se le da
+una **duración** en pasos: `[nota, vel, pasos]`. Una nota de duración 16 se
+sostiene el compás entero. Si varias pistas sostienen a la vez (bajo + pad +
+lead), forman una cama de acorde continua bajo el groove. `canciones/aliento.json`
+lo muestra: bajo, pad y lead mantienen el acorde mientras la batería marca.
+
+```jsonc
+// pad sosteniendo Do todo el compás, en vez de un pinchazo:
+[[60, 0.55, 16], null, null, null, null, null, null, null, … ]
+```
+
+### Jazz: componer con teoría
+
+`theory.py` sabe de armonía de jazz: acordes por cualidad (`maj7`, `m7`, `7♭9`…),
+**voces guía** (la 3ª y la 7ª, las notas que definen un acorde) y el **ii–V–I**.
+`compose_jazz.py` lo usa para escribir una pieza entera: un ii–V–I–VI (Dm7 · G7 ·
+Cmaj7 · A7♭9) con bajo caminante, comping de voces guía con conducción de voces
+suave (cada acorde se mueve por medios tonos y notas comunes) y batería con swing
+de corcheas. El resultado vive en `canciones/jazz.json`.
+
+```
+uv run compose_jazz.py        # regenera canciones/jazz.json
+./play canciones/jazz.json    # a escucharlo
+```
+
 ## Estructura
 
 - `engine.py` — motor de audio (numpy/scipy/sounddevice). No sabe de la UI.
-- `sequencer.py` — secuenciador por pasos (grilla nota-por-paso, reloj por BPM).
-- `theory.py` — teoría musical pura (escalas, acordes diatónicos por grado).
+  Incluye el kit de percusión de 9 voces (kick, redoble, hats cerrado/abierto con
+  choke, 2 toms) con ruido filtrado por modo, click de ataque y velocity.
+- `sequencer.py` — secuenciador por pasos en dos niveles: patrones (grilla
+  nota-por-paso) y arreglo (`order` que los encadena en una canción).
+- `theory.py` — teoría musical pura: escalas y modos, acordes diatónicos por
+  grado, y armonía de jazz (acordes por cualidad, voces guía, ii–V–I).
 - `presets.py` — guardar/cargar la foto completa a `presets/*.json`. No sabe de la UI.
 - `ui.py` — interfaz Textual (faders, selector, osciloscopio, piano, grilla, presets).
-- `synth.py` / `synth` — punto de entrada.
+- `synth.py` / `synth` — punto de entrada (la TUI interactiva).
+- `player.py` / `play` — reproductor en vivo: vigila un archivo de música y lo
+  re-suena al cambiarlo, sin reiniciar. Para componer escribiendo.
+- `render.py` — render fuera de línea: toca una partitura sin audio, escribe un
+  WAV y un análisis (nivel, pico, afinación). El "ojo" para revisar sin oír.
+- `compose_jazz.py` — genera un tema de jazz (ii–V–I–VI) desde `theory.py`:
+  voces guía, bajo caminante y swing → `canciones/jazz.json`.
+- `compose_jazz_solo.py` — un tema largo sobre la misma progresión, como un solo
+  de batería: la base sigue corriendo y la batería construye → `canciones/jazz-solo.json`.
+- `compose_samsara.py` — una pieza de mantra budista: drone modal (frigio), canto
+  de Oṃ Maṇi Padme Hūm, campana y latido, en un ciclo sin fin → `canciones/samsara.json`.
+- `canciones/` — las piezas, en JSON. `primera.json` es un loop de un compás;
+  `cancion.json` encadena varios patrones; `percusion.json` muestra velocity,
+  swing y los hats con choke; `aliento.json` muestra notas largas sostenidas;
+  `jazz.json` es un ii–V–I–VI con voces guía y bajo caminante; `jazz-solo.json`
+  es un tema largo (~1:40) como solo de batería sobre esa misma base;
+  `samsara.json` es un mantra budista (drone + canto en frigio, en bucle).
 - `test_engine.py` — prueba headless del motor (verifica afinación, escribe `demo.wav`).
 - `test_ui.py` — monta la UI sin audio y exporta una captura `ui.svg`.
 - `test_presets.py` — ida y vuelta de presets por disco, headless.
 - `test_theory.py` — escalas, acordes diatónicos y sus nombres (Do mayor, La menor).
+- `test_render.py` — toca la canción de ejemplo headless; verifica que suena y no satura.
+- `test_song.py` — el arreglo: que `order` encadene patrones y la canción de ejemplo cargue.
+- `test_drums.py` — la percusión: velocity, choke (cerrado ahoga al abierto) y swing.
 
 Si el osciloscopio o algún símbolo se ven como cuadritos, es la fuente del
 terminal sin glifos braille; usa una con buen soporte (p. ej. una Nerd Font).

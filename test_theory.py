@@ -42,6 +42,27 @@ def main():
     assert am[0][1] == [69, 72, 76]    # A C E
     print("menor: ok")
 
+    # --- jazz: acordes por cualidad, voces guía y el ii–V–I ---
+    assert T.chord(C, "maj7") == [60, 64, 67, 71]          # Cmaj7 = C E G B
+    assert T.chord(2, "m7") == [62, 65, 69, 72]            # Dm7 = D F A C
+    # las voces guía son la 3ª y la 7ª (las que definen el acorde)
+    assert T.guide_tones(2, "m7") == [5, 0]                # Dm7: 3ª=F, 7ª=C
+    assert T.guide_tones(7, "7") == [11, 5]                # G7:  3ª=B, 7ª=F
+    # el ii–V–I en Do, comprobado por el nombre que sale de las notas
+    prog = T.ii_V_I(C)
+    assert prog == [(2, "m7"), (7, "7"), (0, "maj7")], prog
+    assert [T.chord_label(T.chord(r, q)) for r, q in prog] == ["Dm7", "G7", "Cmaj7"]
+    assert T.chord_symbol(9, "7b9") == "A7♭9"
+    # el giro ii–V–I–VI termina en la dominante secundaria A7♭9
+    assert T.turnaround(C)[3] == (9, "7b9")
+    print("jazz (ii–V–I, voces guía): ok")
+
+    # --- modos: el frigio (Re frigio = teclas blancas desde Re, con ♭2 = Mi♭) ---
+    assert T.scale_pitch_classes(2, "frigio") == [2, 3, 5, 7, 9, 10, 0]   # D E♭ F G A B♭ C
+    assert T.in_scale(63, 2, "frigio")        # E♭ pertenece a Re frigio
+    assert not T.in_scale(64, 2, "frigio")    # E natural no
+    print("modos (frigio): ok")
+
     print("OK -> theory")
 
 

@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "name": "percusion",
+  "_nota": "Demo de percusión sofisticada. Pistas: 0 lead, 1 bajo, 2 pad, 3 kick, 4 snare, 5 hat (cerrado), 6 hat-open (abierto). Las celdas pueden ser [nota, velocity] (0..1) para acentos y ghost notes. 'swing' atrasa el contratiempo (groove). El hat cerrado y el abierto comparten choke: el cerrado en el paso 7/15 ahoga al abierto del 6/14.",
+  "bpm": 96,
+  "swing": 0.5,
+  "patterns": {
+    "groove": [
+      [null, null, null, null, [69, 0.8], null, null, null, null, null, null, null, [72, 0.7], null, null, null],
+      [[45, 0.9], null, null, null, null, null, null, null, [41, 0.8], null, null, null, [43, 0.8], null, null, null],
+      [[60, 0.5], null, null, null, null, null, null, null, [60, 0.5], null, null, null, [62, 0.5], null, null, null],
+      [[36, 1.0], null, null, null, null, null, [36, 0.45], null, [36, 0.95], null, null, [36, 0.6], null, null, null, null],
+      [null, null, null, null, [50, 1.0], null, null, [50, 0.3], null, null, [50, 0.28], null, [50, 1.0], null, null, [50, 0.4]],
+      [[54, 0.9], [54, 0.3], [54, 0.55], [54, 0.3], [54, 0.9], [54, 0.3], null, [54, 0.3], [54, 0.9], [54, 0.3], [54, 0.55], [54, 0.3], [54, 0.9], [54, 0.3], null, [54, 0.3]],
+      [null, null, null, null, null, null, [54, 0.7], null, null, null, null, null, null, null, [54, 0.7], null]
+    ],
+    "fill": [
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [[36, 1.0], null, null, null, [36, 0.8], null, null, null],
+      [[50, 0.3], [50, 0.4], [50, 0.5], [50, 0.6], [50, 0.7], [50, 0.85], [50, 0.95], [50, 1.0]],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, [54, 0.8]]
+    ]
+  },
+  "order": ["groove", "groove", "groove", "fill"]
+}

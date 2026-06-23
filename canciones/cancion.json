@@ -1,0 +1,41 @@
+{
+  "version": 2,
+  "name": "cancion",
+  "_nota": "Canción en La menor que encadena PATRONES con un ARREGLO. 'patterns' define cada patrón (una grilla de 6 pistas: 0 lead, 1 bajo, 2 pad, 3 kick, 4 snare, 5 hat; cada celda null o nota midi; pueden tener distinto largo). 'order' es el arreglo: qué patrón suena y en qué orden; al terminar, la canción se repite. Para reordenar la pieza basta cambiar 'order' sin tocar los patrones. A=intro, B=groove (Am-F-G), C=lift descendente (Am-G-F-Em), fill=relleno de batería (8 pasos).",
+  "bpm": 100,
+  "patterns": {
+    "A": [
+      [null, null, null, null, null, null, null, null, 69, null, null, null, 72, null, null, null],
+      [45, null, null, null, null, null, null, null, 41, null, null, null, 43, null, null, null],
+      [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+      [36, null, null, null, null, null, null, null, 36, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+      [54, null, null, null, 54, null, null, null, 54, null, null, null, 54, null, null, null]
+    ],
+    "B": [
+      [69, null, null, 72, null, null, 71, null, 69, null, null, 72, 74, null, 71, null],
+      [45, null, null, null, null, null, null, null, 41, null, null, null, 43, null, null, null],
+      [60, null, null, null, null, null, null, null, 60, null, null, null, 62, null, null, null],
+      [36, null, null, null, null, null, null, null, 36, null, null, 36, null, null, null, null],
+      [null, null, null, null, 50, null, null, null, null, null, null, null, 50, null, null, null],
+      [54, null, 54, null, 54, null, 54, null, 54, null, 54, null, 54, null, 54, null]
+    ],
+    "C": [
+      [76, null, 74, null, 72, null, 74, null, 72, null, 71, null, 69, null, 71, null],
+      [45, null, null, null, 43, null, null, null, 41, null, null, null, 40, null, null, null],
+      [64, null, null, null, 62, null, null, null, 60, null, null, null, 59, null, null, null],
+      [36, null, null, null, 36, null, null, null, 36, null, null, null, 36, null, null, null],
+      [null, null, null, null, 50, null, null, null, null, null, null, null, 50, null, null, null],
+      [54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54]
+    ],
+    "fill": [
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      [36, null, null, 36, null, null, 36, null],
+      [50, 50, 50, 50, 50, 50, 50, 50],
+      [null, null, null, null, null, null, null, null]
+    ]
+  },
+  "order": ["A", "A", "B", "B", "C", "B", "B", "fill"]
+}

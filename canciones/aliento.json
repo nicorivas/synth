@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "name": "aliento",
+  "_nota": "Demuestra notas de aliento largo. Una celda [nota, vel, duracion] se sostiene 'duracion' pasos. Aqui bajo (1), pad (2) y lead (0) mantienen un acorde el compas entero (duracion 16) = una cama de cuerdas continua, mientras la bateria hace un groove suave. Asi deja de sentirse todo picado e individual. Pistas: 0 lead, 1 bajo, 2 pad, 3 kick, 4 snare, 5 hat, 6 hat-open. Progresion: Am Am F G.",
+  "bpm": 84,
+  "swing": 0.12,
+  "patterns": {
+    "A": [
+      [[76, 0.6, 8], null, null, null, null, null, null, null, [74, 0.6, 8], null, null, null, null, null, null, null],
+      [[45, 0.7, 16], null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+      [[60, 0.55, 16], null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+      [[36, 1.0], null, null, null, null, null, null, null, [36, 0.9], null, null, null, null, null, null, null],
+      [null, null, null, null, [50, 0.95], null, null, null, null, null, null, null, [50, 0.95], null, null, null],
+      [[54, 0.5], null, [54, 0.3], null, [54, 0.5], null, [54, 0.3], null, [54, 0.5], null, [54, 0.3], null, [54, 0.5], null, [54, 0.3], null],
+      [null, null, null, null, null, null, null, null, null, null, null, null, null, null, [54, 0.5], null]
+    ],
+    "B": [
+      [[72, 0.6, 16], null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+      [[41, 0.7, 16], null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+      [[57, 0.55, 16], null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+      [[36, 1.0], null, null, null, null, null, null, null, [36, 0.9], null, null, null, null, null, null, null],
+      [null, null, null, null, [50, 0.95], null, null, null, null, null, null, null, [50, 0.95], null, null, null],
+      [[54, 0.5], null, [54, 0.3], null, [54, 0.5], null, [54, 0.3], null, [54, 0.5], null, [54, 0.3], null, [54, 0.5], null, [54, 0.3], null],
+      [null, null, null, null, null, null, null, null, null, null, null, null, null, null, [54, 0.5], null]
+    ],
+    "C": [
+      [[74, 0.6, 16], null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+      [[43, 0.7, 16], null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+      [[59, 0.55, 16], null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+      [[36, 1.0], null, null, null, null, null, null, null, [36, 0.9], null, null, null, null, null, null, null],
+      [null, null, null, null, [50, 0.95], null, null, null, null, null, null, null, [50, 0.95], null, null, null],
+      [[54, 0.5], null, [54, 0.3], null, [54, 0.5], null, [54, 0.3], null, [54, 0.5], null, [54, 0.3], null, [54, 0.5], null, [54, 0.3], null],
+      [null, null, null, null, null, null, null, null, null, null, null, null, null, null, [54, 0.5], null]
+    ]
+  },
+  "order": ["A", "A", "B", "C"]
+}

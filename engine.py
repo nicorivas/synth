@@ -35,6 +35,11 @@ IDLE, ATTACK, DECAY, SUSTAIN, RELEASE = 0, 1, 2, 3, 4
 # Tipos de instrumento: sustractivo melódico, o percusión (ruido + tono)
 INST_SYNTH, INST_DRUM = 0, 1
 
+# Cómo se filtra el ruido de la percusión: pasa-bajos (cuerpo, kick),
+# pasa-banda (chasquido del redoble) o pasa-altos (siseo del hat/plato).
+NOISE_LP, NOISE_BP, NOISE_HP = 0, 1, 2
+NOISE_MODE_NAMES = ["bajos", "banda", "altos"]
+
 # Destinos del LFO (modulación lenta)
 LFO_OFF, LFO_PITCH, LFO_FILTER, LFO_PWM = 0, 1, 2, 3
 LFO_DEST_NAMES = ["off", "pitch", "filtro", "PWM"]
@@ -84,7 +89,11 @@ class Params:
     drum_drop: float = 3.0       # pitch inicial extra (factor) que cae al golpear
     drum_pdecay: float = 0.03    # s, qué tan rápido cae el pitch
     drum_noise: float = 0.5      # 0 = tono puro (kick) .. 1 = ruido puro (hi-hat)
-    drum_bright: float = 4000.0  # Hz, corte del ruido (agudo = hi-hat)
+    drum_bright: float = 4000.0  # Hz, corte/centro del ruido (agudo = hi-hat)
+    drum_noise_mode: int = NOISE_LP  # cómo se filtra el ruido (bajos/banda/altos)
+    drum_click: float = 0.0      # 0..1, transitorio corto de ataque (pegada/snap)
+    choke_group: int = 0         # >0: al golpear, calla a los demás del mismo grupo
+                                 #     (hat cerrado ahoga al abierto)
     # LFO: un oscilador lento que mueve un destino (vibrato / wah / PWM)
     lfo_dest: int = LFO_OFF
     lfo_shape: int = SINE
@@ -128,11 +137,52 @@ def _biquad_lowpass(fc: float, q: float):
     return b, a
 
 
+def _biquad_highpass(fc: float, q: float):
+    """Pasa-altos RBJ: deja pasar lo agudo. Para el siseo del hi-hat/plato."""
+    fc = float(np.clip(fc, 20.0, SR * 0.45))
+    q = max(q, 0.3)
+    w0 = 2.0 * np.pi * fc / SR
+    cw, sw = np.cos(w0), np.sin(w0)
+    alpha = sw / (2.0 * q)
+    b0 = (1.0 + cw) / 2.0
+    b1 = -(1.0 + cw)
+    b2 = (1.0 + cw) / 2.0
+    a0 = 1.0 + alpha
+    a1 = -2.0 * cw
+    a2 = 1.0 - alpha
+    return np.array([b0, b1, b2]) / a0, np.array([1.0, a1 / a0, a2 / a0])
+
+
+def _biquad_bandpass(fc: float, q: float):
+    """Pasa-banda RBJ (ganancia de pico constante): un foco de frecuencia. Para
+    el chasquido del redoble (banda media-aguda)."""
+    fc = float(np.clip(fc, 20.0, SR * 0.45))
+    q = max(q, 0.3)
+    w0 = 2.0 * np.pi * fc / SR
+    cw, sw = np.cos(w0), np.sin(w0)
+    alpha = sw / (2.0 * q)
+    b0 = alpha
+    b1 = 0.0
+    b2 = -alpha
+    a0 = 1.0 + alpha
+    a1 = -2.0 * cw
+    a2 = 1.0 - alpha
+    return np.array([b0, b1, b2]) / a0, np.array([1.0, a1 / a0, a2 / a0])
+
+
+def _noise_filter(mode: int, fc: float, q: float):
+    if mode == NOISE_HP:
+        return _biquad_highpass(fc, q)
+    if mode == NOISE_BP:
+        return _biquad_bandpass(fc, q)
+    return _biquad_lowpass(fc, q)
+
+
 class Voice:
     """Una voz: dos osciladores (uno detuneado), una envolvente y un filtro
     propio con su estado de delay para que no haya clics entre bloques."""
 
-    __slots__ = ("active", "midi", "freq", "phase1", "phase2",
+    __slots__ = ("active", "midi", "freq", "phase1", "phase2", "vel",
                  "amp_env", "amp_stage", "flt_env", "flt_stage", "zi", "age", "t")
 
     def __init__(self):
@@ -141,6 +191,7 @@ class Voice:
         self.freq = 0.0
         self.phase1 = 0.0   # fase en ciclos [0,1) (synth) o radianes (drum)
         self.phase2 = 0.0
+        self.vel = 1.0      # velocity del golpe (0..1): acentos y ghost notes
         self.amp_env = 0.0      # envolvente de amplitud (VCA)
         self.amp_stage = IDLE
         self.flt_env = 0.0      # envolvente de filtro (VCF)
@@ -149,10 +200,11 @@ class Voice:
         self.age = 0
         self.t = 0             # muestras desde el último golpe (pitch drop de percusión)
 
-    def note_on(self, midi: int, age: int):
+    def note_on(self, midi: int, age: int, vel: float = 1.0):
         self.active = True
         self.midi = midi
         self.freq = midi_to_freq(midi)
+        self.vel = max(0.0, min(1.0, vel))
         self.amp_stage = ATTACK
         self.flt_stage = ATTACK
         self.age = age
@@ -271,7 +323,7 @@ class Voice:
             b, a = _biquad_lowpass(base_fc, p.resonance)
             sig, self.zi = lfilter(b, a, sig, zi=self.zi)
 
-        return sig * amp
+        return sig * amp * self.vel
 
     def _filter_swept(self, sig, cutoff_arr, q, sub=64):
         """Pasa-bajos con cutoff que se mueve: en sub-bloques cortos (coeficientes
@@ -301,12 +353,20 @@ class Voice:
         phase = self.phase1 + np.cumsum(2.0 * np.pi * freq / SR)
         self.phase1 = float(phase[-1] % (2.0 * np.pi))
         tone = np.sin(phase)
-        # ruido filtrado (el "ataque"): paso-bajo a drum_bright
+        # ruido filtrado según el modo: bajos = cuerpo, banda = chasquido, altos =
+        # siseo. Un golpe más fuerte abre un poco el filtro (más brillo), como en
+        # una batería real.
         noise = np.random.standard_normal(frames)
-        b, a = _biquad_lowpass(p.drum_bright, 0.7)
+        bright = p.drum_bright * (0.7 + 0.3 * self.vel)
+        b, a = _noise_filter(p.drum_noise_mode, bright, 0.7)
         noise, self.zi = lfilter(b, a, noise, zi=self.zi)
         mix = (1.0 - p.drum_noise) * tone + p.drum_noise * noise
-        return mix * amp
+        # click de ataque: un transitorio cortísimo (ruido de banda ancha que cae
+        # en ~2 ms) que da pegada al golpe (beater del kick, snap del redoble)
+        if p.drum_click > 0.0:
+            click = np.random.standard_normal(frames) * np.exp(-t / 0.002)
+            mix = mix + p.drum_click * click
+        return mix * amp * self.vel
 
 
 class Instrument:
@@ -320,28 +380,28 @@ class Instrument:
         self._age = 0
         self.lfo_phase = 0.0    # fase del LFO, compartida por todas las voces
 
-    def note_on(self, midi: int):
+    def note_on(self, midi: int, vel: float = 1.0):
         self._age += 1
         # synth: si la nota ya suena, retrigger suave (sin clic).
         # percusión: cada golpe reinicia limpio, nunca encadena.
         if self.params.kind != INST_DRUM:
             for v in self.voices:
                 if v.active and v.midi == midi and v.amp_stage != RELEASE:
-                    v.note_on(midi, self._age)
+                    v.note_on(midi, self._age, vel)
                     return
         # voz libre
         for v in self.voices:
             if not v.active:
-                self._fresh(v, midi)
+                self._fresh(v, midi, vel)
                 return
         # sin voces libres: robar la más vieja, reiniciándola limpia (sin clic de robo)
-        self._fresh(min(self.voices, key=lambda v: v.age), midi)
+        self._fresh(min(self.voices, key=lambda v: v.age), midi, vel)
 
-    def _fresh(self, v, midi: int):
+    def _fresh(self, v, midi: int, vel: float = 1.0):
         v.amp_env = 0.0
         v.flt_env = 0.0
         v.zi = np.zeros(2)
-        v.note_on(midi, self._age)
+        v.note_on(midi, self._age, vel)
 
     def note_off(self, midi: int):
         for v in self.voices:
@@ -373,18 +433,40 @@ class Instrument:
 
 
 def default_instruments():
-    """Set inicial: tres patches melódicos del sinte + tres de percusión."""
+    """Set inicial: tres patches melódicos del sinte + un kit de percusión.
+
+    El kit: kick (cuerpo grave + click de beater), redoble (ruido pasa-banda que
+    chasquea + snap), hat cerrado (siseo pasa-altos, corto) y hat abierto (largo).
+    Cerrado y abierto comparten choke_group=1: golpear el cerrado calla al
+    abierto, como el pedal de un charles de verdad."""
     lead = Params(wave=SAW, cutoff=4000.0, env_to_cutoff=0.5)
     bajo = Params(wave=SQUARE, pulse_width=0.35, cutoff=1200.0, resonance=3.0,
                   amp_decay=0.18, amp_sustain=0.55, amp_release=0.18)
     pad = Params(wave=TRI, detune=8.0, cutoff=2500.0, amp_attack=0.4,
                  amp_release=0.7, amp_sustain=0.8)
+    # volume alto a propósito: un tambor es un transitorio corto y, contra un
+    # synth que sostiene, necesita más pico para sentirse parejo. El kick y el
+    # redoble (el esqueleto del groove) pegan más fuerte; los hats, más suave.
     kick = Params(kind=INST_DRUM, drum_noise=0.05, drum_drop=4.0, drum_pdecay=0.04,
-                  amp_attack=0.001, amp_decay=0.18, amp_release=0.05)
+                  drum_noise_mode=NOISE_LP, drum_bright=2000.0, drum_click=0.5,
+                  volume=1.7, amp_attack=0.001, amp_decay=0.18, amp_release=0.05)
     snare = Params(kind=INST_DRUM, drum_noise=0.6, drum_drop=2.0, drum_pdecay=0.02,
-                   drum_bright=6000.0, amp_attack=0.001, amp_decay=0.14, amp_release=0.05)
-    hat = Params(kind=INST_DRUM, drum_noise=0.95, drum_bright=11000.0,
-                 amp_attack=0.001, amp_decay=0.05, amp_release=0.03)
+                   drum_noise_mode=NOISE_BP, drum_bright=2200.0, drum_click=0.4,
+                   volume=1.5, amp_attack=0.001, amp_decay=0.14, amp_release=0.06)
+    hat = Params(kind=INST_DRUM, drum_noise=0.97, drum_drop=0.0,
+                 drum_noise_mode=NOISE_HP, drum_bright=6000.0, choke_group=1,
+                 volume=0.7, amp_attack=0.001, amp_decay=0.04, amp_release=0.03)
+    hat_open = Params(kind=INST_DRUM, drum_noise=0.97, drum_drop=0.0,
+                      drum_noise_mode=NOISE_HP, drum_bright=5000.0, choke_group=1,
+                      volume=0.75, amp_attack=0.001, amp_decay=0.30, amp_release=0.25)
+    # toms: cuerpo tonal con caída de pitch suave (no como el kick) y poco ruido,
+    # registro medio. La nota los afina —para fills melódicos por el kit.
+    tom_hi = Params(kind=INST_DRUM, drum_noise=0.12, drum_drop=0.8, drum_pdecay=0.09,
+                    drum_noise_mode=NOISE_LP, drum_bright=3500.0, drum_click=0.25,
+                    volume=1.4, amp_attack=0.001, amp_decay=0.22, amp_release=0.10)
+    tom_lo = Params(kind=INST_DRUM, drum_noise=0.12, drum_drop=0.8, drum_pdecay=0.11,
+                    drum_noise_mode=NOISE_LP, drum_bright=2600.0, drum_click=0.25,
+                    volume=1.5, amp_attack=0.001, amp_decay=0.28, amp_release=0.12)
     return [
         Instrument("lead", lead),
         Instrument("bajo", bajo),
@@ -392,6 +474,9 @@ def default_instruments():
         Instrument("kick", kick, n_voices=8),
         Instrument("snare", snare, n_voices=8),
         Instrument("hat", hat, n_voices=8),
+        Instrument("hat-open", hat_open, n_voices=4),
+        Instrument("tom-hi", tom_hi, n_voices=4),
+        Instrument("tom-lo", tom_lo, n_voices=4),
     ]
 
 
@@ -422,9 +507,16 @@ class Engine:
 
     # --- eventos de notas (inst=None -> el instrumento seleccionado) ---
 
-    def note_on(self, midi: int, inst: int = None):
+    def note_on(self, midi: int, inst: int = None, vel: float = 1.0):
         with self._lock:
-            self.instruments[self.sel if inst is None else inst].note_on(midi)
+            i = self.sel if inst is None else inst
+            target = self.instruments[i]
+            g = target.params.choke_group
+            if g:                       # choke: callar a los demás del mismo grupo
+                for j, ins in enumerate(self.instruments):
+                    if j != i and ins.params.choke_group == g:
+                        ins.panic()
+            target.note_on(midi, vel)
 
     def note_off(self, midi: int, inst: int = None):
         with self._lock:

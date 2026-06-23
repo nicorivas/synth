@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "name": "primera",
+  "_nota": "Loop en La menor: Am - F - G. Pistas: 0 lead, 1 bajo, 2 pad, 3 kick, 4 snare, 5 hat. Cada celda es null o una nota midi. Usa los patches por defecto del motor.",
+  "sequencer": {
+    "bpm": 100,
+    "grid": [
+      [69, null, null, 72, null, null, 71, null, 69, null, null, 72, 74, null, 71, null],
+      [45, null, null, null, null, null, null, null, 41, null, null, null, 43, null, null, null],
+      [60, null, null, null, null, null, null, null, 60, null, null, null, 62, null, null, null],
+      [36, null, null, null, null, null, null, null, 36, null, null, 36, null, null, null, null],
+      [null, null, null, null, 50, null, null, null, null, null, null, null, 50, null, null, null],
+      [54, null, 54, null, 54, null, 54, null, 54, null, 54, null, 54, null, 54, null]
+    ]
+  }
+}

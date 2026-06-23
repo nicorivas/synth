@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Reproductor en vivo: vigila un archivo de música y lo re-suena al cambiarlo.
+# uv resuelve el entorno y lo corre.
+cd "$(dirname "$0")" && exec uv run player.py "$@"
