@@ -59,9 +59,9 @@ El piano y el secuenciador son para tocar a mano. Pero también se puede compone
 
 `player.py` vigila ese archivo (una "foto" en JSON, el mismo formato que los
 presets: basta el bloque `sequencer` con el `bpm` y la grilla de 6 pistas × 16
-pasos, cada celda `null` o una nota midi) y cada vez que lo guardas vuelve a
-sonar con el cambio. Para revisar una pieza **sin** tarjeta de audio —que suene
-algo, que no sature, qué alturas tiene— está el render fuera de línea:
+pasos, cada celda `null`, una nota midi o un acorde) y cada vez que lo guardas
+vuelve a sonar con el cambio. Para revisar una pieza **sin** tarjeta de audio
+—que suene algo, que no sature, qué alturas tiene— está el render fuera de línea:
 
 ```
 uv run render.py canciones/primera.json 4 render.wav   # -> WAV + análisis
@@ -69,6 +69,35 @@ uv run render.py canciones/primera.json 4 render.wav   # -> WAV + análisis
 
 Así nació este flujo: Kichoro escribe el archivo y revisa por números (FFT,
 nivel); una persona con oídos lo escucha en vivo y le va diciendo cómo suena.
+
+### Acordes en una celda
+
+Una celda puede llevar **un acorde entero**, no sólo una nota: si el primer
+elemento es una *lista* de notas, suenan todas a la vez en esa pista —
+`[[60, 64, 67], vel, dur]` es Do mayor sostenido—. Así una sola pista de pad
+carga toda la armonía (antes había que gastar una pista por voz). Para escribir
+la armonía **por grado** en un `compose_*.py`, `theory.chord_cell(grado, tónica,
+modo, octave, sevenths, vel, dur)` arma la celda sola: `chord_cell(1, 0, "mayor")`
+= la tríada de Do. Ejemplo en `compose_acordes.py` (I–V–vi–IV con toda la
+armonía en una pista); verificación end-to-end por FFT en `test_chords.py`.
+
+### Ver una canción sin oírla (`ojos.py`)
+
+Para un compositor que no oye, `ojos.py` traduce una canción a lo que sí se puede
+**ver**:
+
+```
+uv run ojos.py canciones/la-mano.json               # todo a texto
+uv run ojos.py canciones/la-mano.json --png roll.png # además, piano-roll a PNG
+```
+
+Imprime: la **tonalidad probable** (inferida de las notas), la **progresión de
+acordes** compás a compás, un **piano-roll ASCII** (altura × paso, una letra por
+pista, `─` = sostenido), **avisos** (notas fuera de tono, saltos melódicos
+grandes, barro de registro), y el **audio** (nivel/clip, el arco dinámico compás
+a compás como sparkline, el balance grave/medio/agudo, y un **cotejo por FFT** de
+que las alturas escritas de verdad sonaron). El `--png` dibuja el piano-roll
+lineal de toda la pieza. Funciones puras probadas en `test_ojos.py`.
 
 ### Canciones largas: patrones + arreglo
 

@@ -1,8 +1,7 @@
 .venv/
 __pycache__/
 *.pyc
-# artefactos de prueba (regenerables con los test_*.py)
-ui.svg
-ui.png
-demo.wav
-render.wav
+# artefactos regenerables (audio e imágenes de render; se rehacen con render.py / ojos.py / test_*.py)
+*.wav
+*.png
+*.svg

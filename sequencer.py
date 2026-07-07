@@ -28,18 +28,25 @@ _DEFAULT_NOTE = [60, 36, 60, 36, 50, 54, 54, 50, 43]
 
 
 def _split_cell(cell):
-    """Una celda es None, una nota midi, [midi, vel] o [midi, vel, duración].
-    Devuelve (midi, vel, dur_en_pasos). Sin duración, dura 1 paso (como antes);
-    con duración mayor, la nota se sostiene varios pasos —el aliento largo de una
-    cuerda. Una nota suelta = velocity 1.0, duración 1."""
+    """Una celda es None, una nota midi, [midi, vel] o [midi, vel, duración]. El
+    primer elemento puede ser TAMBIÉN una lista de notas midi -> un ACORDE (todas
+    comparten velocity y duración): [[n1, n2, ...], vel, dur]. Devuelve
+    (notas, vel, dur_en_pasos): `notas` es una lista de midis (una nota suelta =
+    lista de 1), o None si la celda está apagada. Sin duración dura 1 paso; con
+    duración mayor se sostiene —el aliento largo de una cuerda—. Nota suelta =
+    velocity 1.0, duración 1."""
     if cell is None:
         return None, 0.0, 1
     if isinstance(cell, (list, tuple)):
-        midi = int(cell[0])
+        head = cell[0]
+        if isinstance(head, (list, tuple)):          # acorde: [[n1,n2,...], vel, dur]
+            notes = [int(n) for n in head]
+        else:                                        # una nota: [midi, vel, dur]
+            notes = [int(head)]
         vel = float(cell[1]) if len(cell) > 1 else 1.0
         dur = int(cell[2]) if len(cell) > 2 else 1
-        return midi, max(0.0, min(1.0, vel)), max(1, dur)
-    return int(cell), 1.0, 1
+        return notes, max(0.0, min(1.0, vel)), max(1, dur)
+    return [int(cell)], 1.0, 1
 
 
 class Pattern:
@@ -112,7 +119,12 @@ class Sequencer:
         if cur is None:
             return
         if isinstance(cur, (list, tuple)):       # conserva la velocity al transponer
-            self.grid[track][step] = [max(0, min(108, int(cur[0]) + d))] + list(cur[1:])
+            head = cur[0]
+            if isinstance(head, (list, tuple)):  # acorde: transpone cada nota
+                head = [max(0, min(108, int(n) + d)) for n in head]
+            else:
+                head = max(0, min(108, int(head) + d))
+            self.grid[track][step] = [head] + list(cur[1:])
         else:
             self.set_note(track, step, cur + d)
 
@@ -170,12 +182,15 @@ class Sequencer:
         # 2) disparar las notas de este paso
         for tr, row in enumerate(self.grid):
             if self.pos < len(row):
-                note, vel, dur = _split_cell(row[self.pos])
-                if note is not None:
-                    # monofónico por pista: si algo seguía sonando ahí, córtalo limpio
+                notes, vel, dur = _split_cell(row[self.pos])
+                if notes:
+                    # una pista es una voz "de acorde": el nuevo disparo reemplaza
+                    # lo que sonara ahí (corte limpio) y luego suenan TODAS las
+                    # notas de la celda a la vez (el instrumento es polifónico).
                     for e in self._active:
                         if e[0] == tr:
                             self.engine.note_off(e[1], inst=tr)
                     self._active = [e for e in self._active if e[0] != tr]
-                    self.engine.note_on(note, inst=tr, vel=vel)
-                    self._active.append([tr, note, dur])
+                    for n in notes:
+                        self.engine.note_on(n, inst=tr, vel=vel)
+                        self._active.append([tr, n, dur])

@@ -54,6 +54,15 @@ def diatonic_chord(degree: int, tonic: int, mode: str,
     return [root + ivs[(d + s) % n] + 12 * ((d + s) // n) for s in steps]
 
 
+def chord_cell(degree: int, tonic: int, mode: str, octave: int = 4,
+               sevenths: bool = False, vel: float = 1.0, dur: int = 1) -> list:
+    """Una CELDA de acorde lista para el secuenciador: `[[notas...], vel, dur]`.
+    Envuelve `diatonic_chord` para escribir armonía **por grado** en un
+    `compose_*.py` y soltar el acorde entero en UNA sola pista (el pad carga toda
+    la armonía, sin gastar una pista por nota)."""
+    return [diatonic_chord(degree, tonic, mode, octave, sevenths), round(vel, 3), max(1, int(dur))]
+
+
 def chord_label(notes: list[int]) -> str:
     """Nombre corto del acorde a partir de sus notas: C, Dm, B°, G7, Cmaj7, Bø7…"""
     root = NOTE_NAMES[notes[0] % 12]

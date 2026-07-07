@@ -77,13 +77,24 @@ def snapshot(engine, seq) -> dict:
 
 
 def _coerce_cell(v):
-    """Una celda: None, una nota midi, [midi, vel] o [midi, vel, duración].
-    Conserva velocity (0..1) y duración (pasos) si vienen; una nota suelta queda
-    como int (velocity 1.0, duración 1)."""
+    """Una celda: None, una nota midi, [midi, vel] o [midi, vel, duración]. El
+    primer elemento puede ser una LISTA de notas midi -> un acorde (todas
+    comparten velocity y duración). Conserva velocity (0..1) y duración (pasos)
+    si vienen; una nota suelta queda como int (velocity 1.0, duración 1)."""
     if v is None:
         return None
     if isinstance(v, (list, tuple)) and v:
-        midi = max(0, min(108, int(v[0])))
+        head = v[0]
+        if isinstance(head, (list, tuple)):                 # acorde
+            notes = [max(0, min(108, int(n))) for n in head]
+            if not notes:
+                return None
+            if len(v) > 2:
+                return [notes, max(0.0, min(1.0, float(v[1]))), max(1, int(v[2]))]
+            if len(v) > 1:
+                return [notes, max(0.0, min(1.0, float(v[1])))]
+            return [notes]
+        midi = max(0, min(108, int(head)))
         if len(v) > 2:
             vel = max(0.0, min(1.0, float(v[1])))
             return [midi, vel, max(1, int(v[2]))]
