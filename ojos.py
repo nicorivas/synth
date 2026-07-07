@@ -348,6 +348,9 @@ def main():
     print(f"  {song['bpm']} bpm · swing {song.get('swing',0)} · {len(patterns)} patrones · "
           f"{len(order)} compases · ~{dur_s:.0f}s")
     print(f"  tonalidad probable: {T.NOTE_NAMES[tonic]} {mode}  (ajuste {fit*100:.0f}%)")
+    rv = song.get("reverb")
+    if isinstance(rv, dict) and rv.get("wet", 0) > 0:
+        print(f"  sala (reverb): wet {rv['wet']} · room {rv.get('room', '·')} · damp {rv.get('damp', '·')}")
     pitched = [t for t in tracks if not t["drum"]]
     print("  pistas: " + "  ".join(f"{t['glyph']}={t['name']}" for t in pitched))
 

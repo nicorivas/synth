@@ -138,6 +138,7 @@ def main():
                  "celda, no en 3 pads. Kick y snare quedan libres. Mismas notas y arreglo. "
                  "Generado por compose_lamano_acordes.py.",
         "bpm": BPM, "swing": SWING,
+        "reverb": {"wet": 0.26, "room": 0.74, "damp": 0.45},   # una sala cálida y suave
         "instruments": instruments(),
         "patterns": PATTERNS,
         "order": ORDER,

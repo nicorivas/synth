@@ -99,6 +99,24 @@ a compás como sparkline, el balance grave/medio/agudo, y un **cotejo por FFT** 
 que las alturas escritas de verdad sonaron). El `--png` dibuja el piano-roll
 lineal de toda la pieza. Funciones puras probadas en `test_ojos.py`.
 
+### Sala (reverb)
+
+Una canción puede pedir un poco de **sala** con un bloque `reverb`:
+
+```jsonc
+{
+  "reverb": { "wet": 0.26, "room": 0.74, "damp": 0.45 },
+  ...
+}
+```
+
+`wet` (0..1) es cuánta sala se mezcla (0 = seco), `room` (0..1) alarga la cola y
+`damp` (0..1) la oscurece. Es un reverb algorítmico estilo Freeverb (combs con
+amortiguación + allpass de difusión, en `reverb.py`), aplicado sobre la mezcla en
+el motor —así lo oyen igual `./play` y el render offline—. Se guarda con el resto
+de la foto (`presets`). Probado en `test_reverb.py` (cola que decae, estable, e
+idéntico sin importar el tamaño de bloque). Verifícalo por oído: `wet` es el gusto.
+
 ### Canciones largas: patrones + arreglo
 
 Una grilla sola es un compás que se repite. Para piezas largas hay dos niveles

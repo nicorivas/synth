@@ -73,6 +73,9 @@ def snapshot(engine, seq) -> dict:
             {"name": ins.name, "params": dataclasses.asdict(ins.params)}
             for ins in engine.instruments
         ],
+        "reverb": {"wet": float(engine.reverb.wet),
+                   "room": float(engine.reverb.room),
+                   "damp": float(engine.reverb.damp)},
     }
 
 
@@ -186,6 +189,17 @@ def restore(engine, seq, data: dict) -> None:
             seq.swing = max(0.0, min(0.7, float(swing)))
         except (TypeError, ValueError):
             pass
+
+    rv = data.get("reverb")                  # la canción puede traer su sala
+    if isinstance(rv, dict):
+        r = engine.reverb
+        try:
+            r.wet = max(0.0, min(1.0, float(rv.get("wet", r.wet))))
+            r.room = max(0.0, min(1.0, float(rv.get("room", r.room))))
+            r.damp = max(0.0, min(0.95, float(rv.get("damp", r.damp))))
+        except (TypeError, ValueError):
+            pass
+        engine.reverb.reset()                # cola limpia al cargar/renderizar
 
     pats, order = _read_patterns(data, sq, len(engine.instruments))
     if pats:

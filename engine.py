@@ -20,6 +20,8 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.signal import lfilter
 
+import reverb as _reverb
+
 SR = 44_100          # frecuencia de muestreo
 BLOCK = 512          # muestras por bloque -> ~11.6 ms (colchón vs. underruns)
 MAX_VOICES = 8       # polifonía
@@ -488,6 +490,7 @@ class Engine:
         self.scope = np.zeros(BLOCK, dtype=np.float32)  # último bloque (mono) para el osciloscopio
         self.level = 0.0   # nivel RMS para el medidor
         self.stream = None
+        self.reverb = _reverb.Reverb()     # sala global (wet=0 por defecto -> apagado)
         # --- diagnóstico (SYNTH_DIAG=1): cuenta underflows y graba la salida ---
         self._diag = bool(os.environ.get("SYNTH_DIAG"))
         self._rec = []
@@ -542,6 +545,7 @@ class Engine:
             for ins in self.instruments:
                 ins.render_into(out, frames)
         out *= 0.32                       # headroom para varios instrumentos
+        out = self.reverb.process(out)    # sala (si wet>0; si no, devuelve la señal seca)
         out = np.tanh(out)                # soft-clip cálido / limitador global
         self.scope = out.astype(np.float32).copy()
         self.level = float(np.sqrt(np.mean(out * out)))

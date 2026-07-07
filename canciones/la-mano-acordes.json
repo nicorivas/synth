@@ -4,6 +4,11 @@
  "_nota": "LA MANO (re-voiceada con acordes-en-celda, 2026-07-07) — misma pieza que la-mano.json pero la armonia va en UNA pista (2=pad) como acorde por celda, no en 3 pads. Kick y snare quedan libres. Mismas notas y arreglo. Generado por compose_lamano_acordes.py.",
  "bpm": 66,
  "swing": 0.0,
+ "reverb": {
+  "wet": 0.26,
+  "room": 0.74,
+  "damp": 0.45
+ },
  "instruments": [
   {
    "name": "voz",
