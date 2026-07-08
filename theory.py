@@ -22,6 +22,7 @@ SCALES = {
     "dórico": [0, 2, 3, 5, 7, 9, 10],     # menor con 6ª mayor (el modo del ii del jazz)
     "mixolidio": [0, 2, 4, 5, 7, 9, 10],  # mayor con 7ª menor (el modo del V dominante)
     "frigio": [0, 1, 3, 5, 7, 8, 10],     # menor con ♭2: el color devocional/oriental
+    "lidio": [0, 2, 4, 6, 7, 9, 11],      # mayor con #4: el color lujoso del maj7#11 (el jazz modal)
 }
 MODES = ["mayor", "menor"]
 

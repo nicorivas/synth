@@ -83,16 +83,16 @@ _TRIAD = {(0, 4, 7): "", (0, 3, 7): "m", (0, 3, 6): "°", (0, 4, 8): "+"}
 def name_chord(midis: list) -> str:
     """Nombre del acorde a partir de notas cualesquiera (maneja inversiones y
     notas añadidas probando cada nota como fundamental)."""
-    pcs = sorted(set(m % 12 for m in midis))
-    if not pcs:
+    if not midis:
         return "—"
+    pcs = sorted(set(m % 12 for m in midis))
+    bass = min(midis) % 12                     # la nota más grave: casi siempre la fundamental
     if len(pcs) == 1:
         return T.NOTE_NAMES[pcs[0]]
     if len(pcs) == 2:
-        lo = min(midis) % 12
-        iv = sorted((p - lo) % 12 for p in pcs)[1]
+        iv = sorted((p - bass) % 12 for p in pcs)[1]
         if iv == 7:
-            return T.NOTE_NAMES[lo] + "5"            # quinta abierta / power
+            return T.NOTE_NAMES[bass] + "5"          # quinta abierta / power
         return "+".join(T.NOTE_NAMES[p] for p in pcs)
     best = None
     for root in pcs:
@@ -100,30 +100,52 @@ def name_chord(midis: list) -> str:
         for triad, q in _TRIAD.items():
             if set(triad) <= ivs:
                 extras = ivs - set(triad)
-                cand = (len(triad), -len(extras), root, q, extras)
-                if best is None or cand[:2] > best[:2]:
+                has7 = 1 if (10 in extras or 11 in extras) else 0
+                qrank = {"": 3, "m": 2, "°": 1, "+": 0}[q]
+                # prioridad: fundamental en el bajo > acorde de 7ª completo > tríada
+                # más llena > menos añadidos > mayor/menor sobre dim/aug
+                cand = (1 if root == bass else 0, has7, len(triad), -len(extras), qrank,
+                        root, q, extras)
+                if best is None or cand[:5] > best[:5]:
                     best = cand
-    if best is None:
-        return "(" + " ".join(T.NOTE_NAMES[p] for p in pcs) + ")"
-    _, _, root, q, extras = best
+    if best is None:                           # sin tríada: ¿un sus (con el bajo de fundamental)?
+        ivs = set((p - bass) % 12 for p in pcs)
+        if {0, 5, 7} <= ivs:
+            susq, rem = "sus4", ivs - {0, 5, 7}
+        elif {0, 2, 7} <= ivs:
+            susq, rem = "sus2", ivs - {0, 2, 7}
+        else:
+            return "(" + " ".join(T.NOTE_NAMES[p] for p in pcs) + ")"
+        sev = "7" if 10 in rem else ("maj7" if 11 in rem else "")
+        return T.NOTE_NAMES[bass] + sev + susq
+    _, _, _, _, _, root, q, extras = best
     tags = []
+    if 9 in extras and q == "": tags.append("6"); extras -= {9}
     if 11 in extras: tags.append("maj7"); extras -= {11}
     elif 10 in extras: tags.append("7"); extras -= {10}
     if 2 in extras: tags.append("add9"); extras -= {2}
     if 5 in extras: tags.append("add4"); extras -= {5}
-    if 9 in extras and q == "": tags.append("6"); extras -= {9}
     for e in sorted(extras): tags.append("+" + T.NOTE_NAMES[(root + e) % 12])
     return T.NOTE_NAMES[root] + q + "".join(tags)
 
 
 def bar_harmony(grid: list, tracks: list, n_steps: int) -> list:
-    """Las notas 'de armonía' de un compás: las sostenidas (dur >= medio compás),
-    que son el pad/bajo, no la melodía rápida."""
-    thr = max(2, int(n_steps * 0.75))       # casi el compás entero = pad/bajo, no melodía
+    """Las notas 'de armonía' de un compás: una CELDA-ACORDE (comping, aunque sea un
+    golpe corto), la fundamental del bajo en el primer tiempo, y notas sostenidas
+    (pad). NO la melodía/solo rápido."""
+    beat = max(1, n_steps // 4)
+    sustained = max(2, int(n_steps * 0.75))
     notes = []
-    for ev in pattern_events(grid, tracks):
-        if not ev["drum"] and ev["dur"] >= thr:
-            notes.append(ev["pitch"])
+    for tr, row in enumerate(grid):
+        if tr < len(tracks) and tracks[tr]["drum"]:
+            continue
+        for st, cell in enumerate(row):
+            if cell is None:
+                continue
+            ns, _, dur = _split_cell(cell)
+            is_chord = isinstance(cell, (list, tuple)) and isinstance(cell[0], (list, tuple))
+            if is_chord or (st == 0 and dur >= beat) or dur >= sustained:
+                notes += ns
     return notes
 
 
