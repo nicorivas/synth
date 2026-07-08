@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.signal import lfilter
@@ -44,6 +44,13 @@ NOISE_MODE_NAMES = ["bajos", "banda", "altos"]
 LFO_OFF, LFO_PITCH, LFO_FILTER, LFO_PWM = 0, 1, 2, 3
 LFO_DEST_NAMES = ["off", "pitch", "filtro", "PWM"]
 
+# Ecualizador por patch: bandas de octava (Hz) con ganancia propia en dB.
+# Va DESPUÉS del pasa-bajos: el cutoff sigue barriendo los niveles (con su
+# envolvente y LFO) y el EQ esculpe a mano qué frecuencias suben o bajan.
+EQ_BANDS = [63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0]
+EQ_Q = 1.2            # ancho ~1 octava por banda
+EQ_RANGE_DB = 12.0    # cada banda va de -12 a +12 dB
+
 
 def _lfo_array(shape: int, phase: np.ndarray) -> np.ndarray:
     """Onda del LFO en [-1, 1] muestreada por muestra (fase array en [0,1))."""
@@ -68,6 +75,10 @@ class Params:
     wave: int = SAW
     detune: float = 0.0        # cents de separación entre osc1 y osc2 (0 = unísono)
     pulse_width: float = 0.5   # ancho del pulso de la cuadrada (PWM); 0.5 = simétrica
+    # afinación del patch entero (además de la nota): con capas, permite poner
+    # la B una octava/quinta arriba (transpose) o desafinarla unos cents (fine)
+    transpose: float = 0.0     # semitonos, -24..+24
+    fine: float = 0.0          # cents, -50..+50
     cutoff: float = 4_000.0    # Hz
     resonance: float = 1.2     # Q del filtro
     env_to_cutoff: float = 0.4 # 0..1, cuánto abre la envolvente de filtro el cutoff
@@ -99,6 +110,8 @@ class Params:
     lfo_shape: int = SINE
     lfo_rate: float = 5.0        # Hz
     lfo_depth: float = 0.0       # 0..1
+    # ecualizador: ganancia en dB por banda de EQ_BANDS (0 = banda plana)
+    eq: list = field(default_factory=lambda: [0.0] * len(EQ_BANDS))
 
 
 def _poly_blep(t: np.ndarray, dt: float) -> np.ndarray:
@@ -170,6 +183,23 @@ def _biquad_bandpass(fc: float, q: float):
     return np.array([b0, b1, b2]) / a0, np.array([1.0, a1 / a0, a2 / a0])
 
 
+def _biquad_peaking(fc: float, q: float, gain_db: float):
+    """Campana RBJ (peaking EQ): sube o baja una banda alrededor de `fc` sin
+    tocar el resto. Una por banda del ecualizador."""
+    fc = float(np.clip(fc, 20.0, SR * 0.45))
+    amp = 10.0 ** (gain_db / 40.0)
+    w0 = 2.0 * np.pi * fc / SR
+    cw, sw = np.cos(w0), np.sin(w0)
+    alpha = sw / (2.0 * max(q, 0.3))
+    b0 = 1.0 + alpha * amp
+    b1 = -2.0 * cw
+    b2 = 1.0 - alpha * amp
+    a0 = 1.0 + alpha / amp
+    a1 = -2.0 * cw
+    a2 = 1.0 - alpha / amp
+    return np.array([b0, b1, b2]) / a0, np.array([1.0, a1 / a0, a2 / a0])
+
+
 def _noise_filter(mode: int, fc: float, q: float):
     if mode == NOISE_HP:
         return _biquad_highpass(fc, q)
@@ -215,6 +245,15 @@ class Voice:
         if self.active and self.amp_stage != IDLE:
             self.amp_stage = RELEASE
             self.flt_stage = RELEASE
+
+    def resume(self, age: int):
+        """Retomar una nota que estaba soltándose (el legato del gate): las
+        envolventes vuelven SUAVES hacia su sustain —etapa DECAY, que tiende al
+        sustain desde donde esté— sin pasar por el ataque. Re-atacar aquí
+        sonaba como un segundo golpe (amplitud a tope y filtro reabierto)."""
+        self.amp_stage = DECAY
+        self.flt_stage = DECAY
+        self.age = age
 
     # --- síntesis de un bloque ---
 
@@ -301,11 +340,14 @@ class Voice:
             self.flt_env, self.flt_stage,
             p.flt_attack, p.flt_decay, p.flt_sustain, p.flt_release, frames)
 
+        # afinación del patch (transpose en semitonos + fine en cents): se lee
+        # aquí y no en note_on, así mover el fader retona las notas que suenan
+        base = self.freq * 2.0 ** ((p.transpose + p.fine / 100.0) / 12.0)
         # el LFO (onda por muestra) mueve un destino sin escalones de bloque
-        freq, pw, lfo_filter = self.freq, None, False
+        freq, pw, lfo_filter = base, None, False
         if lfo_arr is not None:
             if p.lfo_dest == LFO_PITCH:
-                freq = self.freq * 2.0 ** (float(lfo_arr.mean()) * p.lfo_depth * 2.0 / 12.0)
+                freq = base * 2.0 ** (float(lfo_arr.mean()) * p.lfo_depth * 2.0 / 12.0)
             elif p.lfo_dest == LFO_PWM:
                 pw = p.pulse_width + lfo_arr * p.lfo_depth * 0.45   # ancho por muestra
             elif p.lfo_dest == LFO_FILTER:
@@ -349,7 +391,8 @@ class Voice:
         t = (self.t + n) / SR              # tiempo desde el golpe
         self.t += frames
         # cuerpo tonal: la frecuencia arranca alta y cae a la nota (el "tum" del kick)
-        freq = self.freq * (1.0 + p.drum_drop * np.exp(-t / max(p.drum_pdecay, 1e-4)))
+        base = self.freq * 2.0 ** ((p.transpose + p.fine / 100.0) / 12.0)
+        freq = base * (1.0 + p.drum_drop * np.exp(-t / max(p.drum_pdecay, 1e-4)))
         phase = self.phase1 + np.cumsum(2.0 * np.pi * freq / SR)
         self.phase1 = float(phase[-1] % (2.0 * np.pi))
         tone = np.sin(phase)
@@ -371,65 +414,121 @@ class Voice:
 
 class Instrument:
     """Un instrumento = un patch (Params) + su propio grupo de voces. El motor
-    tiene varios y los suma; cada uno asigna y roba sus voces de forma autónoma."""
+    tiene varios y los suma; cada uno asigna y roba sus voces de forma autónoma.
 
-    def __init__(self, name: str, params: Params, n_voices: int = 6):
+    Con `layered=True` el instrumento gana una **capa B**: un segundo patch
+    completo con su propio grupo de voces y su propio LFO que, al activarla
+    (`layer_on`), suena apilado con la capa A en cada nota —el "layer" de los
+    sintes de los 80 (un pad detrás del lead, una sierra sobre un cuadrado)."""
+
+    def __init__(self, name: str, params: Params, n_voices: int = 6,
+                 layered: bool = False):
         self.name = name
         self.params = params
         self.voices = [Voice() for _ in range(n_voices)]
         self._age = 0
         self.lfo_phase = 0.0    # fase del LFO, compartida por todas las voces
+        self.eq_zi = [np.zeros(2) for _ in EQ_BANDS]   # estado del EQ (por banda)
+        # capa B (solo si layered): patch, voces, LFO y EQ propios
+        self.layer_on = False
+        self.params_b = Params() if layered else None
+        self.voices_b = [Voice() for _ in range(n_voices)] if layered else []
+        self.lfo_phase_b = 0.0
+        self.eq_zi_b = [np.zeros(2) for _ in EQ_BANDS]
 
-    def note_on(self, midi: int, vel: float = 1.0):
+    def note_on(self, midi: int, vel: float = 1.0, legato: bool = False):
         self._age += 1
+        self._pool_note_on(self.voices, self.params, midi, vel, legato)
+        if self.layer_on and self.params_b is not None:
+            self._pool_note_on(self.voices_b, self.params_b, midi, vel, legato)
+
+    def _pool_note_on(self, voices: list, params: Params, midi: int, vel: float,
+                      legato: bool = False):
         # synth: si la nota ya suena, retrigger suave (sin clic).
         # percusión: cada golpe reinicia limpio, nunca encadena.
-        if self.params.kind != INST_DRUM:
-            for v in self.voices:
-                if v.active and v.midi == midi and v.amp_stage != RELEASE:
-                    v.note_on(midi, self._age, vel)
+        # legato (lo pide el teclado de la TUI): retomar también una nota que
+        # aún está SOLTÁNDOSE —el gate del terminal la soltó pero la tecla
+        # sigue apretada— para que la repetición no suene como segundo ataque.
+        if params.kind != INST_DRUM:
+            for v in voices:
+                if v.active and v.midi == midi and (legato or v.amp_stage != RELEASE):
+                    if legato and v.amp_stage == RELEASE:
+                        v.resume(self._age)      # vuelve al sustain, sin re-atacar
+                    else:
+                        v.note_on(midi, self._age, vel)
                     return
         # voz libre
-        for v in self.voices:
+        for v in voices:
             if not v.active:
                 self._fresh(v, midi, vel)
                 return
         # sin voces libres: robar la más vieja, reiniciándola limpia (sin clic de robo)
-        self._fresh(min(self.voices, key=lambda v: v.age), midi, vel)
+        self._fresh(min(voices, key=lambda v: v.age), midi, vel)
 
     def _fresh(self, v, midi: int, vel: float = 1.0):
         v.amp_env = 0.0
         v.flt_env = 0.0
         v.zi = np.zeros(2)
+        # fase a cero: con la envolvente en 0 no hay clic posible, y así las
+        # capas A y B arrancan la nota EN FASE. Si cada voz partiera donde
+        # quedó, el desfase aleatorio entre capas suena a eco/chorus (en el
+        # grave, hasta ~15 ms: "no suenan juntas").
+        v.phase1 = 0.0
+        v.phase2 = 0.0
         v.note_on(midi, self._age, vel)
 
     def note_off(self, midi: int):
-        for v in self.voices:
+        for v in (*self.voices, *self.voices_b):
             if v.active and v.midi == midi:
                 v.note_off()
 
     def panic(self):
-        for v in self.voices:
+        for v in (*self.voices, *self.voices_b):
             v.note_off()
 
     def active_notes(self):
+        # basta la capa A: la B toca siempre las mismas notas
         return sorted({v.midi for v in self.voices
                        if v.active and v.amp_stage in (ATTACK, DECAY, SUSTAIN)})
 
     def render_into(self, out: np.ndarray, frames: int):
-        p = self.params
+        self.lfo_phase = self._pool_render(out, self.voices, self.params,
+                                           self.lfo_phase, self.eq_zi, frames)
+        if self.params_b is not None:   # aun apagada, la capa suelta sus colas
+            self.lfo_phase_b = self._pool_render(out, self.voices_b, self.params_b,
+                                                 self.lfo_phase_b, self.eq_zi_b,
+                                                 frames)
+
+    def _pool_render(self, out: np.ndarray, voices: list, p: Params,
+                     lfo_phase: float, eq_zi: list, frames: int) -> float:
         lfo_arr = None
         if p.lfo_dest != LFO_OFF and p.lfo_depth > 0.0:
-            ph = (self.lfo_phase + np.arange(frames) * (p.lfo_rate / SR)) % 1.0
+            ph = (lfo_phase + np.arange(frames) * (p.lfo_rate / SR)) % 1.0
             lfo_arr = _lfo_array(p.lfo_shape, ph)
-            self.lfo_phase = float((self.lfo_phase + frames * p.lfo_rate / SR) % 1.0)
+            lfo_phase = float((lfo_phase + frames * p.lfo_rate / SR) % 1.0)
         acc = None
-        for v in self.voices:
+        for v in voices:
             if v.active or v.amp_stage != IDLE:
                 s = v.render(p, frames, lfo_arr)
                 acc = s if acc is None else acc + s
         if acc is not None:
-            out += acc * (p.volume * p.drive)   # volumen y carácter por instrumento
+            acc = self._apply_eq(acc, p, eq_zi)
+            out += acc * (p.volume * p.drive)   # volumen y carácter por capa
+        return lfo_phase
+
+    @staticmethod
+    def _apply_eq(sig: np.ndarray, p: Params, eq_zi: list) -> np.ndarray:
+        """El ecualizador del patch: una campana por banda con ganancia != 0.
+        Es lineal, así que va sobre la suma de voces de la capa (no por voz):
+        mismo resultado, un solo filtro. Las bandas planas no cuestan nada."""
+        eq = p.eq or []
+        for i, fc in enumerate(EQ_BANDS):
+            if i >= len(eq) or abs(eq[i]) < 0.05:
+                continue
+            g = float(np.clip(eq[i], -EQ_RANGE_DB, EQ_RANGE_DB))
+            b, a = _biquad_peaking(fc, EQ_Q, g)
+            sig, eq_zi[i] = lfilter(b, a, sig, zi=eq_zi[i])
+        return sig
 
 
 def default_instruments():
@@ -468,7 +567,7 @@ def default_instruments():
                     drum_noise_mode=NOISE_LP, drum_bright=2600.0, drum_click=0.25,
                     volume=1.5, amp_attack=0.001, amp_decay=0.28, amp_release=0.12)
     return [
-        Instrument("lead", lead),
+        Instrument("lead", lead, layered=True),   # el lead trae capa B apilable
         Instrument("bajo", bajo),
         Instrument("pad", pad),
         Instrument("kick", kick, n_voices=8),
@@ -484,6 +583,7 @@ class Engine:
     def __init__(self):
         self.instruments = default_instruments()
         self.sel = 0                       # instrumento que toca/edita la tab synth
+        self.edit_b = False                # si el rack edita la capa B (cuando la hay)
         self._lock = threading.RLock()
         self.scope = np.zeros(BLOCK, dtype=np.float32)  # último bloque (mono) para el osciloscopio
         self.level = 0.0   # nivel RMS para el medidor
@@ -498,8 +598,13 @@ class Engine:
 
     @property
     def params(self) -> Params:
-        """El patch del instrumento seleccionado (lo que edita la tab synth)."""
-        return self.instruments[self.sel].params
+        """El patch del instrumento seleccionado (lo que edita la tab synth).
+        Con `edit_b` puesto y capa B disponible, es el patch B: el mismo rack
+        de controles edita una capa u otra sin duplicar ni un fader."""
+        ins = self.instruments[self.sel]
+        if self.edit_b and ins.params_b is not None:
+            return ins.params_b
+        return ins.params
 
     def select(self, i: int):
         with self._lock:
@@ -507,7 +612,8 @@ class Engine:
 
     # --- eventos de notas (inst=None -> el instrumento seleccionado) ---
 
-    def note_on(self, midi: int, inst: int = None, vel: float = 1.0):
+    def note_on(self, midi: int, inst: int = None, vel: float = 1.0,
+                legato: bool = False):
         with self._lock:
             i = self.sel if inst is None else inst
             target = self.instruments[i]
@@ -516,7 +622,7 @@ class Engine:
                 for j, ins in enumerate(self.instruments):
                     if j != i and ins.params.choke_group == g:
                         ins.panic()
-            target.note_on(midi, vel)
+            target.note_on(midi, vel, legato)
 
     def note_off(self, midi: int, inst: int = None):
         with self._lock:

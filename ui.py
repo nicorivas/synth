@@ -427,7 +427,10 @@ class LfoViz(Widget):
         for gx in range(gw):
             gy = int((0.5 - float(vals[gx]) * 0.46) * (gh - 1))
             cells[gy // 4][gx // 2] |= _BRAILLE[(gy % 4) * 2 + (gx % 2)]
-        cursor = int((inst.lfo_phase % 1.0) * w) if active else -1
+        # la fase de la capa que se está editando (A o B)
+        phase = (inst.lfo_phase_b if self.eng.edit_b and inst.params_b is not None
+                 else inst.lfo_phase)
+        cursor = int((phase % 1.0) * w) if active else -1
         out = Text()
         for cy in range(h):
             for cx in range(w):
@@ -436,6 +439,68 @@ class LfoViz(Widget):
                     out.append(chr(0x2800 + b) if b else "┊", style=CYELLOW)
                 elif b:
                     out.append(chr(0x2800 + b), style=wave_color)
+                else:
+                    out.append(" ")
+            out.append("\n")
+        return out
+
+
+# ================================================================ EqViz
+class EqViz(Widget):
+    """La respuesta en frecuencia del patch que se edita: el pasa-bajos (cutoff
+    y resonancia) multiplicado por el ecualizador de bandas. Al mover el cutoff
+    se ve cómo arrastra los niveles; al subir/bajar una banda, cómo se deforma
+    la curva. Eje: 40 Hz … 16 kHz (log), -24 … +12 dB."""
+    can_focus = False
+
+    def __init__(self, eng: E.Engine):
+        super().__init__()
+        self.eng = eng
+
+    def render(self) -> Text:
+        w, h = self.size.width, self.size.height
+        if w < 4 or h < 3:
+            return Text("")
+        p = self.eng.params
+        gw, gh = w * 2, h * 4
+        f = np.geomspace(40.0, 16000.0, gw)
+        z = np.exp(-1j * 2.0 * np.pi * f / E.SR)
+
+        def mag(ba):
+            b, a = ba
+            return np.abs((b[0] + b[1] * z + b[2] * z * z) /
+                          (1.0 + a[1] * z + a[2] * z * z))
+
+        resp = mag(E._biquad_lowpass(p.cutoff, p.resonance))
+        for i, fc in enumerate(E.EQ_BANDS):
+            g = p.eq[i] if i < len(p.eq) else 0.0
+            if abs(g) >= 0.05:
+                resp = resp * mag(E._biquad_peaking(fc, E.EQ_Q, g))
+        db = 20.0 * np.log10(np.maximum(resp, 1e-6))
+        lvl = np.clip((db + 24.0) / 36.0, 0.0, 1.0)
+
+        cells = [[0] * w for _ in range(h)]
+        prev = None
+        for gx in range(gw):
+            gy = int((1.0 - lvl[gx]) * (gh - 1))
+            ys = (gy,) if prev is None else range(min(prev, gy), max(prev, gy) + 1)
+            for yy in ys:
+                cells[yy // 4][gx // 2] |= _BRAILLE[(yy % 4) * 2 + (gx % 2)]
+            prev = gy
+
+        ins = self.eng.instruments[self.eng.sel]
+        capa = " · capa B" if (self.eng.edit_b and ins.params_b is not None) else ""
+        self.border_title = f"respuesta · {ins.name}{capa}"
+        self.border_subtitle = "40 Hz … 16 kHz · línea = 0 dB"
+        fila_cero = int((1.0 - 24.0 / 36.0) * (gh - 1)) // 4   # dónde queda 0 dB
+        out = Text()
+        for cy in range(h):
+            for cx in range(w):
+                b = cells[cy][cx]
+                if b:
+                    out.append(chr(0x2800 + b), style=CTEAL)
+                elif cy == fila_cero:
+                    out.append("·", style=CSURF)
                 else:
                     out.append(" ")
             out.append("\n")
@@ -835,6 +900,11 @@ class SynthApp(App):
     #scope {{ width: 1fr; border: round {CSURF}; border-title-color: {CLAV};
               margin: 1 1 0 2; }}
     #lfoviz {{ width: 11; height: 5; }}
+    #panel-layer WaveSelector {{ width: 7; }}
+    #panel-layer Fader {{ width: 6; }}
+    #eqviz {{ height: 1fr; border: round {CSURF}; border-title-color: {CLAV};
+              border-subtitle-color: {CSUB}; margin: 1 2; }}
+    #eq-help {{ height: 1; background: {CCRUST}; color: {CSUB}; padding: 0 1; }}
     #envviz {{ width: 2fr; border: round {CSURF}; border-title-color: {CLAV};
                border-subtitle-color: {CSUB}; margin: 1 2 0 1; }}
     #piano {{ height: 4; margin: 1 2 0 2; }}
@@ -874,6 +944,7 @@ class SynthApp(App):
         self._kbd = {}   # midi -> última vez visto (para soltar al dejar de repetir)
         self._last_active = ()  # notas activas en el tick previo (para repintar el piano solo al cambiar)
         self._last_env = None   # params de envolvente en el tick previo (para repintar la curva al cambiar)
+        self._last_eq = None    # (cutoff, res, eq) en el tick previo (ídem, curva del eq)
 
     def compose(self) -> ComposeResult:
         yield Static("♪  kichoro · synth", id="title")
@@ -914,6 +985,23 @@ class SynthApp(App):
             fdr("flt_decay", "Dec", 0.005, 3, _fmt_s, log=True),
             fdr("flt_sustain", "Sus", 0, 1, _fmt_pct),
             fdr("flt_release", "Rel", 0.005, 4, _fmt_s, log=True))
+        # capa B (solo instrumentos con layer, hoy el lead): activarla y elegir
+        # cuál capa edita el rack completo (eng.params es dinámico también en esto).
+        # Semi/Fine afinan la capa que se edita: octava/quinta arriba, o unos
+        # cents para desafinarlas entre sí.
+        layer = Panel("capa B",
+            WaveSelector(0, self._set_layer_on,
+                         getter=lambda: 1 if eng.instruments[eng.sel].layer_on else 0,
+                         title="Capa", options=["off", "on"]),
+            WaveSelector(0, self._set_edit_layer,
+                         getter=lambda: 1 if eng.edit_b else 0,
+                         title="Editar", options=["A", "B"]),
+            Fader("Semi", -24, 24, eng.params.transpose, lambda v: f"{v:+.0f}",
+                  lambda v: setattr(eng.params, "transpose", float(round(v))),
+                  getter=getp("transpose")),
+            fdr("fine", "Fine", -50, 50, lambda v: f"{v:+.0f}c"))
+        layer.id = "panel-layer"
+
         lfoviz = LfoViz(eng); lfoviz.id = "lfoviz"
         lfo = Panel("LFO",
             sel("lfo_dest", "Dest", E.LFO_DEST_NAMES),
@@ -933,6 +1021,17 @@ class SynthApp(App):
             fdr("amp_decay", "Dec", 0.005, 1, _fmt_s, log=True),
             fdr("amp_release", "Rel", 0.005, 1, _fmt_s, log=True))
         drumvol = Panel("amp", fdr("volume", "Vol", 0, 1, _fmt_pct))
+
+        # --- eq: 8 bandas de octava (±12 dB) sobre el patch que se edita ---
+        def eq_fdr(i, label):
+            return Fader(label, -E.EQ_RANGE_DB, E.EQ_RANGE_DB, eng.params.eq[i],
+                         lambda v: f"{v:+.0f}dB",
+                         lambda v, i=i: eng.params.eq.__setitem__(i, float(v)),
+                         getter=lambda i=i: eng.params.eq[i])
+        eq_labels = ["63", "125", "250", "500", "1k", "2k", "4k", "8k"]
+        eqpanel = Panel("bandas · dB",
+                        *[eq_fdr(i, lb) for i, lb in enumerate(eq_labels)])
+        eqviz = EqViz(eng); eqviz.id = "eqviz"
 
         scope = Scope(eng); scope.id = "scope"; scope.border_title = "osciloscopio"
         envviz = EnvViz(eng); envviz.id = "envviz"; envviz.border_title = "envolvente"
@@ -955,10 +1054,16 @@ class SynthApp(App):
         with TabbedContent(initial="tab-synth", id="tabs"):
             with TabPane("synth", id="tab-synth"):
                 yield Horizontal(osc, filt, lfo, classes="rackrow rack-synth")
-                yield Horizontal(ampenv, fltenv, ampvol, classes="rackrow rack-synth")
+                yield Horizontal(ampenv, fltenv, ampvol, layer, classes="rackrow rack-synth")
                 yield Horizontal(drumctl, drumenv, drumvol, classes="rackrow", id="rack-drum")
                 yield Horizontal(scope, envviz, classes="visrow")
                 yield piano
+            with TabPane("eq", id="tab-eq"):
+                yield Horizontal(eqpanel, classes="rackrow")
+                yield eqviz
+                yield Static("  el cutoff (tab synth) sigue barriendo la curva; "
+                             "las bandas suben o bajan cada zona · edita la capa "
+                             "elegida en A/B", id="eq-help")
             with TabPane("secuenciador", id="tab-seq"):
                 yield grid
                 yield Static("", id="seqbar")
@@ -1018,24 +1123,48 @@ class SynthApp(App):
         """Selecciona la pista/instrumento: la tab synth pasa a editar su patch.
         Si es un tambor, muestra los controles de percusión en vez de los del sinte."""
         self.engine.select(i)
-        is_drum = self.engine.params.kind == E.INST_DRUM
+        ins = self.engine.instruments[self.engine.sel]
+        is_drum = ins.params.kind == E.INST_DRUM
         try:
             for w in self.query(".rack-synth"):
                 w.display = not is_drum
             self.query_one("#rack-drum").display = is_drum
+            self.query_one("#panel-layer").display = (ins.params_b is not None
+                                                      and not is_drum)
         except Exception:  # noqa: BLE001
             pass
+        self._reload_patch_controls()
+        self.update_seq_status()
+
+    def _reload_patch_controls(self):
+        """Relee todo el rack desde el patch activo (cambió el instrumento
+        seleccionado, o la capa A/B que se edita)."""
         for f in self.query(Fader):
             f.reload()
         for ws in self.query(WaveSelector):
             ws.reload()
-        self._last_env = None     # fuerza repintar la curva del nuevo instrumento
+        self._last_env = None     # fuerza repintar las curvas del nuevo patch
+        self._last_eq = None
         try:
             self.query_one("#envviz").refresh()
             self.query_one("#lfoviz").refresh()
+            self.query_one("#eqviz").refresh()
         except Exception:  # noqa: BLE001
             pass
-        self.update_seq_status()
+
+    # --- capa B (los setters del panel "capa B") ---
+    def _set_layer_on(self, v: int):
+        ins = self.engine.instruments[self.engine.sel]
+        if ins.params_b is None:
+            return
+        ins.layer_on = bool(v)
+        if not ins.layer_on:          # al apagarla, suelta lo que tuviera sonando
+            for voice in ins.voices_b:
+                voice.note_off()
+
+    def _set_edit_layer(self, v: int):
+        self.engine.edit_b = bool(v)
+        self._reload_patch_controls()
 
     def update_seq_status(self):
         try:
@@ -1057,6 +1186,8 @@ class SynthApp(App):
             if event.pane.id == "tab-seq":
                 self.query_one("#seqgrid").focus()
                 self.update_seq_status()
+            elif event.pane.id == "tab-eq":
+                self.query_one("#eqviz").refresh()
             elif event.pane.id == "tab-presets":
                 self.query_one("#preset-list", PresetList).reload()
             elif event.pane.id == "tab-tonal":
@@ -1170,7 +1301,9 @@ class SynthApp(App):
         for m in notes:
             m = max(0, min(108, m))
             if m not in self._kbd:
-                self.engine.note_on(m)
+                # legato: si el gate alcanzó a soltarla y esto es la repetición
+                # de la tecla, retomarla sin segundo ataque
+                self.engine.note_on(m, legato=True)
             self._kbd[m] = now
 
     # --- bucle visual + soltado de notas de teclado ---
@@ -1198,6 +1331,12 @@ class SynthApp(App):
             if env_sig != self._last_env:
                 self._last_env = env_sig
                 self.query_one("#envviz").refresh()
+            # repintar la curva del eq cuando cambia el cutoff, la resonancia o
+            # una banda: ahí se VE al cutoff arrastrando los niveles
+            eq_sig = (p.cutoff, p.resonance, tuple(p.eq))
+            if eq_sig != self._last_eq:
+                self._last_eq = eq_sig
+                self.query_one("#eqviz").refresh()
         except Exception:  # noqa: BLE001
             pass
         self._update_status()
@@ -1243,7 +1382,9 @@ class SynthApp(App):
         if k in KEYMAP:
             midi = 12 * (self.base_octave + 1) + KEYMAP[k]
             if midi not in self._kbd:
-                self.engine.note_on(midi)
+                # legato: la repetición de una tecla sostenida retoma la nota
+                # que el gate soltó, en vez de atacarla de nuevo (sonaba doble)
+                self.engine.note_on(midi, legato=True)
             self._kbd[midi] = time.monotonic()
             event.stop()
 
