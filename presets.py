@@ -69,14 +69,19 @@ def snapshot(engine, seq) -> dict:
             "swing": float(seq.swing),
             "grid": [list(row) for row in seq.grid],
         },
-        "instruments": [
-            {"name": ins.name, "params": dataclasses.asdict(ins.params)}
-            for ins in engine.instruments
-        ],
+        "instruments": [_snapshot_instrument(ins) for ins in engine.instruments],
         "reverb": {"wet": float(engine.reverb.wet),
                    "room": float(engine.reverb.room),
                    "damp": float(engine.reverb.damp)},
     }
+
+
+def _snapshot_instrument(ins) -> dict:
+    d = {"name": ins.name, "params": dataclasses.asdict(ins.params)}
+    if ins.params_b is not None:      # capa B: su patch y si está activa
+        d["layer_on"] = bool(ins.layer_on)
+        d["params_b"] = dataclasses.asdict(ins.params_b)
+    return d
 
 
 def _coerce_cell(v):
@@ -173,6 +178,11 @@ def restore(engine, seq, data: dict) -> None:
                 ins.params = _params_from_dict(idata.get("params"))
                 ins.name = str(idata.get("name", ins.name))
                 ins.lfo_phase = 0.0
+                if ins.params_b is not None:   # capa B: foto vieja -> apagada
+                    if idata.get("params_b") is not None:
+                        ins.params_b = _params_from_dict(idata.get("params_b"))
+                    ins.layer_on = bool(idata.get("layer_on", False))
+                    ins.lfo_phase_b = 0.0
         sel = data.get("sel", engine.sel)
         engine.sel = int(sel) % len(engine.instruments) if engine.instruments else 0
 

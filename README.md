@@ -16,6 +16,18 @@ La primera vez `uv` arma el entorno solo (numpy, scipy, sounddevice, textual).
     (sierra/cuadrada con anti-aliasing polyBLEP).
   - Filtro pasa-bajos resonante; la envolvente lo abre (`E→F`).
   - Envolvente ADSR.
+- **Capa B en el lead**: un segundo patch completo (osciladores, filtro,
+  envolventes y LFO propios) que al activarse suena apilado con el primero en
+  cada nota —el *layer* de los sintes de los 80. En el panel "capa B" se
+  enciende y se elige si el rack de controles edita la capa A o la B; los
+  presets y las canciones guardan las dos capas. Cada capa tiene su propia
+  **afinación** (`Semi` en semitonos, `Fine` en cents): la B puede ir una
+  octava o una quinta arriba, o apenas corrida para engordar el unísono.
+- **Ecualizador por capa**, en la pantalla principal (junto al osciloscopio):
+  8 bandas de octava (63 Hz–8 kHz) de ±12 dB después del filtro, como barras
+  clickeables/arrastrables (o ←→ y ↑↓ con el foco) sobre la curva de respuesta
+  total. El cutoff sigue barriendo esa curva —con su envolvente y LFO— y tú
+  decides qué frecuencias suben, se quedan o bajan.
 - **Osciloscopio** en vivo (braille).
 - **Piano** de dos octavas, clickeable.
 - **Presets**: guardar y recuperar la foto completa (el sonido de todos los
@@ -43,10 +55,13 @@ La primera vez `uv` arma el entorno solo (numpy, scipy, sounddevice, textual).
 
 El terminal no avisa cuándo *sueltas* una tecla, así que la nota se mantiene
 mientras el sistema repite la tecla y se suelta ~0.4 s después (constante
-`GATE_TIMEOUT` en `ui.py`). El piano con **mouse** sí sostiene exacto
-(mantén apretado). Para tocar fluido con el teclado, conviene una repetición de
-tecla rápida en macOS (Ajustes → Teclado → *Velocidad de repetición* alta y
-*Retardo* corto).
+`GATE_TIMEOUT` en `ui.py`). Si el *retardo inicial* de repetición de tu teclado
+es más largo que ese gate, la nota alcanza a soltarse antes de la primera
+repetición; en ese caso la repetición la **retoma donde iba** (legato) en vez de
+atacarla de nuevo —antes sonaba dos veces. El piano con **mouse** sí sostiene
+exacto (mantén apretado). Para tocar fluido con el teclado, conviene una
+repetición de tecla rápida en macOS (Ajustes → Teclado → *Velocidad de
+repetición* alta y *Retardo* corto).
 
 ## Componer en vivo (sin tocar el piano)
 
