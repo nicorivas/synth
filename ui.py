@@ -572,33 +572,40 @@ class EqPad(Widget):
                 curva[yy // 4][gx // 2] |= _BRAILLE[(yy % 4) * 2 + (gx % 2)]
             prev = gy
 
-        # las barras: desde la línea de 0 dB hacia arriba o abajo
-        barras = [[0] * w for _ in range(rows)]
+        # las barras: como un eq gráfico de verdad —bloques sólidos desde abajo,
+        # el tope marca la ganancia (0 dB queda a media altura, sobre la línea
+        # punteada). Octavos de celda: movimiento suave, sin costuras, y bien
+        # distintas de la curva punteada de atrás.
+        bar_w = max(2, cw - 2)
+        barra = [[None] * w for _ in range(rows)]     # carácter por celda
         dueno = [[-1] * w for _ in range(rows)]       # qué banda pinta la celda
+        octavos_de = "▁▂▃▄▅▆▇"
         for i, g in enumerate(gains):
-            x0 = i * cw + max(0, (cw - 2) // 2)
-            dots = int(round(abs(g) / E.EQ_RANGE_DB * mid))
-            lo, hi = (int(mid) - dots, int(mid)) if g >= 0 else \
-                     (int(mid), int(mid) + dots)
-            for gy in range(max(0, lo), min(gh, hi + 1)):
-                bit = _BRAILLE[(gy % 4) * 2] | _BRAILLE[(gy % 4) * 2 + 1]
-                for cx in range(x0, min(x0 + 2, w)):
-                    barras[gy // 4][cx] |= bit
-                    dueno[gy // 4][cx] = i
+            alto = max(1, int(round((g + E.EQ_RANGE_DB) /
+                                    (2 * E.EQ_RANGE_DB) * rows * 8)))
+            x0 = i * cw + max(0, (cw - bar_w) // 2)
+            for k in range(rows):                     # k filas desde abajo
+                resto = alto - k * 8
+                if resto <= 0:
+                    break
+                ch = "█" if resto >= 8 else octavos_de[resto - 1]
+                cy = rows - 1 - k
+                for cx in range(x0, min(x0 + bar_w, w)):
+                    barra[cy][cx] = ch
+                    dueno[cy][cx] = i
 
         ins = self.eng.instruments[self.eng.sel]
         capa = " · B" if (self.eng.edit_b and ins.params_b is not None) else ""
         self.border_title = f"eq · {ins.name}{capa}"
         self.border_subtitle = f"{self.LABELS[self.band]} Hz · {gains[self.band]:+.0f} dB"
-        fila_cero = int(mid) // 4
+        fila_cero = (rows - 1) // 2
         out = Text()
         for cy in range(rows):
             for cx in range(w):
-                if barras[cy][cx]:
+                if barra[cy][cx]:
                     sel = dueno[cy][cx] == self.band
                     color = CYELLOW if (focus and sel) else (CTEAL if sel else CBLUE)
-                    out.append(chr(0x2800 + (barras[cy][cx] | curva[cy][cx])),
-                               style=color)
+                    out.append(barra[cy][cx], style=color)
                 elif curva[cy][cx]:
                     out.append(chr(0x2800 + curva[cy][cx]), style=COVER)
                 elif cy == fila_cero:
@@ -1008,9 +1015,9 @@ class SynthApp(App):
     #lfoviz {{ width: 11; height: 5; }}
     #panel-layer WaveSelector {{ width: 7; }}
     #panel-layer Fader {{ width: 6; }}
-    #eqpad {{ width: 36; border: round {CSURF}; border-title-color: {CLAV};
+    #eqpad {{ width: 1fr; min-width: 36; border: round {CSURF}; border-title-color: {CLAV};
               border-subtitle-color: {CSUB}; margin: 1 2 0 1; }}
-    #envviz {{ width: 2fr; border: round {CSURF}; border-title-color: {CLAV};
+    #envviz {{ width: 1fr; border: round {CSURF}; border-title-color: {CLAV};
                border-subtitle-color: {CSUB}; margin: 1 2 0 1; }}
     #piano {{ height: 4; margin: 1 2 0 2; }}
     #seqgrid {{ height: 1fr; margin: 1 2; }}
