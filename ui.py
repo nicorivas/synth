@@ -445,24 +445,109 @@ class LfoViz(Widget):
         return out
 
 
-# ================================================================ EqViz
-class EqViz(Widget):
-    """La respuesta en frecuencia del patch que se edita: el pasa-bajos (cutoff
-    y resonancia) multiplicado por el ecualizador de bandas. Al mover el cutoff
-    se ve cómo arrastra los niveles; al subir/bajar una banda, cómo se deforma
-    la curva. Eje: 40 Hz … 16 kHz (log), -24 … +12 dB."""
-    can_focus = False
+# ================================================================ EqPad
+class EqPad(Widget):
+    """El ecualizador, en la pantalla principal: una barra por banda (±12 dB
+    desde la línea de 0), clickeable y arrastrable, con la respuesta total del
+    patch (pasa-bajos × eq) dibujada detrás —ahí se ve al cutoff arrastrar los
+    niveles. Teclado: ←→ elige banda, ↑↓ sube/baja (PgUp/PgDn a saltos,
+    Home la deja plana)."""
+    can_focus = True
+
+    LABELS = ["63", "125", "250", "500", "1k", "2k", "4k", "8k"]
 
     def __init__(self, eng: E.Engine):
         super().__init__()
         self.eng = eng
+        self.band = 0
+        self._dragging = False
+
+    def reload(self):
+        self.refresh()
+
+    # --- estado ---
+    def _gains(self) -> list:
+        eq = self.eng.params.eq
+        return [float(eq[i]) if i < len(eq) else 0.0
+                for i in range(len(E.EQ_BANDS))]
+
+    def _set_gain(self, band: int, g: float):
+        self.band = max(0, min(len(E.EQ_BANDS) - 1, band))
+        eq = self.eng.params.eq
+        while len(eq) < len(E.EQ_BANDS):
+            eq.append(0.0)
+        eq[self.band] = float(max(-E.EQ_RANGE_DB,
+                                  min(E.EQ_RANGE_DB, round(g))))
+        self.refresh()
+
+    def _cols(self) -> int:
+        return max(2, self.size.width // len(E.EQ_BANDS))
+
+    def _gain_at(self, y: int) -> float:
+        rows = max(2, self.size.height - 1)      # la última fila es de etiquetas
+        mid = (rows - 1) / 2.0
+        return (mid - y) / max(mid, 1e-6) * E.EQ_RANGE_DB
+
+    # --- mouse: clic/arrastre pone la banda en ese nivel; rueda ±1 dB ---
+    def on_mouse_down(self, event: events.MouseDown):
+        self._dragging = True
+        self.capture_mouse()
+        self._set_gain(event.x // self._cols(), self._gain_at(event.y))
+        self.focus()
+        event.stop()
+
+    def on_mouse_move(self, event: events.MouseMove):
+        if self._dragging:
+            self._set_gain(event.x // self._cols(), self._gain_at(event.y))
+            event.stop()
+
+    def on_mouse_up(self, event: events.MouseUp):
+        self._dragging = False
+        self.capture_mouse(False)
+        event.stop()
+
+    def on_mouse_scroll_up(self, event):
+        b = event.x // self._cols()
+        self._set_gain(b, self._gains()[min(b, 7)] + 1)
+        event.stop()
+
+    def on_mouse_scroll_down(self, event):
+        b = event.x // self._cols()
+        self._set_gain(b, self._gains()[min(b, 7)] - 1)
+        event.stop()
+
+    # --- teclado ---
+    def on_key(self, event: events.Key):
+        k = event.key
+        g = self._gains()
+        if k == "left":
+            self.band = max(0, self.band - 1); self.refresh(); event.stop()
+        elif k == "right":
+            self.band = min(len(E.EQ_BANDS) - 1, self.band + 1)
+            self.refresh(); event.stop()
+        elif k == "up":
+            self._set_gain(self.band, g[self.band] + 1); event.stop()
+        elif k == "down":
+            self._set_gain(self.band, g[self.band] - 1); event.stop()
+        elif k == "pageup":
+            self._set_gain(self.band, g[self.band] + 3); event.stop()
+        elif k == "pagedown":
+            self._set_gain(self.band, g[self.band] - 3); event.stop()
+        elif k == "home":
+            self._set_gain(self.band, 0.0); event.stop()
 
     def render(self) -> Text:
         w, h = self.size.width, self.size.height
-        if w < 4 or h < 3:
+        if w < 10 or h < 3:
             return Text("")
         p = self.eng.params
-        gw, gh = w * 2, h * 4
+        gains = self._gains()
+        focus = self.has_focus
+        rows = h - 1
+        gh, gw, cw = rows * 4, w * 2, self._cols()
+        mid = (gh - 1) / 2.0
+
+        # la respuesta total (misma matemática del motor), de fondo
         f = np.geomspace(40.0, 16000.0, gw)
         z = np.exp(-1j * 2.0 * np.pi * f / E.SR)
 
@@ -473,37 +558,58 @@ class EqViz(Widget):
 
         resp = mag(E._biquad_lowpass(p.cutoff, p.resonance))
         for i, fc in enumerate(E.EQ_BANDS):
-            g = p.eq[i] if i < len(p.eq) else 0.0
-            if abs(g) >= 0.05:
-                resp = resp * mag(E._biquad_peaking(fc, E.EQ_Q, g))
+            if abs(gains[i]) >= 0.05:
+                resp = resp * mag(E._biquad_peaking(fc, E.EQ_Q, gains[i]))
         db = 20.0 * np.log10(np.maximum(resp, 1e-6))
-        lvl = np.clip((db + 24.0) / 36.0, 0.0, 1.0)
+        lvl = np.clip((db + 24.0) / 36.0, 0.0, 1.0)   # -24..+12 dB a 0..1
 
-        cells = [[0] * w for _ in range(h)]
+        curva = [[0] * w for _ in range(rows)]
         prev = None
         for gx in range(gw):
             gy = int((1.0 - lvl[gx]) * (gh - 1))
             ys = (gy,) if prev is None else range(min(prev, gy), max(prev, gy) + 1)
             for yy in ys:
-                cells[yy // 4][gx // 2] |= _BRAILLE[(yy % 4) * 2 + (gx % 2)]
+                curva[yy // 4][gx // 2] |= _BRAILLE[(yy % 4) * 2 + (gx % 2)]
             prev = gy
 
+        # las barras: desde la línea de 0 dB hacia arriba o abajo
+        barras = [[0] * w for _ in range(rows)]
+        dueno = [[-1] * w for _ in range(rows)]       # qué banda pinta la celda
+        for i, g in enumerate(gains):
+            x0 = i * cw + max(0, (cw - 2) // 2)
+            dots = int(round(abs(g) / E.EQ_RANGE_DB * mid))
+            lo, hi = (int(mid) - dots, int(mid)) if g >= 0 else \
+                     (int(mid), int(mid) + dots)
+            for gy in range(max(0, lo), min(gh, hi + 1)):
+                bit = _BRAILLE[(gy % 4) * 2] | _BRAILLE[(gy % 4) * 2 + 1]
+                for cx in range(x0, min(x0 + 2, w)):
+                    barras[gy // 4][cx] |= bit
+                    dueno[gy // 4][cx] = i
+
         ins = self.eng.instruments[self.eng.sel]
-        capa = " · capa B" if (self.eng.edit_b and ins.params_b is not None) else ""
-        self.border_title = f"respuesta · {ins.name}{capa}"
-        self.border_subtitle = "40 Hz … 16 kHz · línea = 0 dB"
-        fila_cero = int((1.0 - 24.0 / 36.0) * (gh - 1)) // 4   # dónde queda 0 dB
+        capa = " · B" if (self.eng.edit_b and ins.params_b is not None) else ""
+        self.border_title = f"eq · {ins.name}{capa}"
+        self.border_subtitle = f"{self.LABELS[self.band]} Hz · {gains[self.band]:+.0f} dB"
+        fila_cero = int(mid) // 4
         out = Text()
-        for cy in range(h):
+        for cy in range(rows):
             for cx in range(w):
-                b = cells[cy][cx]
-                if b:
-                    out.append(chr(0x2800 + b), style=CTEAL)
+                if barras[cy][cx]:
+                    sel = dueno[cy][cx] == self.band
+                    color = CYELLOW if (focus and sel) else (CTEAL if sel else CBLUE)
+                    out.append(chr(0x2800 + (barras[cy][cx] | curva[cy][cx])),
+                               style=color)
+                elif curva[cy][cx]:
+                    out.append(chr(0x2800 + curva[cy][cx]), style=COVER)
                 elif cy == fila_cero:
                     out.append("·", style=CSURF)
                 else:
                     out.append(" ")
             out.append("\n")
+        for i, lb in enumerate(self.LABELS):      # etiquetas de las bandas
+            sel = i == self.band
+            out.append(lb.center(cw)[:cw],
+                       style=(CYELLOW if focus else CGREEN) if sel else CSUB)
         return out
 
 
@@ -902,9 +1008,8 @@ class SynthApp(App):
     #lfoviz {{ width: 11; height: 5; }}
     #panel-layer WaveSelector {{ width: 7; }}
     #panel-layer Fader {{ width: 6; }}
-    #eqviz {{ height: 1fr; border: round {CSURF}; border-title-color: {CLAV};
-              border-subtitle-color: {CSUB}; margin: 1 2; }}
-    #eq-help {{ height: 1; background: {CCRUST}; color: {CSUB}; padding: 0 1; }}
+    #eqpad {{ width: 36; border: round {CSURF}; border-title-color: {CLAV};
+              border-subtitle-color: {CSUB}; margin: 1 2 0 1; }}
     #envviz {{ width: 2fr; border: round {CSURF}; border-title-color: {CLAV};
                border-subtitle-color: {CSUB}; margin: 1 2 0 1; }}
     #piano {{ height: 4; margin: 1 2 0 2; }}
@@ -1022,16 +1127,8 @@ class SynthApp(App):
             fdr("amp_release", "Rel", 0.005, 1, _fmt_s, log=True))
         drumvol = Panel("amp", fdr("volume", "Vol", 0, 1, _fmt_pct))
 
-        # --- eq: 8 bandas de octava (±12 dB) sobre el patch que se edita ---
-        def eq_fdr(i, label):
-            return Fader(label, -E.EQ_RANGE_DB, E.EQ_RANGE_DB, eng.params.eq[i],
-                         lambda v: f"{v:+.0f}dB",
-                         lambda v, i=i: eng.params.eq.__setitem__(i, float(v)),
-                         getter=lambda i=i: eng.params.eq[i])
-        eq_labels = ["63", "125", "250", "500", "1k", "2k", "4k", "8k"]
-        eqpanel = Panel("bandas · dB",
-                        *[eq_fdr(i, lb) for i, lb in enumerate(eq_labels)])
-        eqviz = EqViz(eng); eqviz.id = "eqviz"
+        # eq en la pantalla principal: barras clickeables junto al osciloscopio
+        eqpad = EqPad(eng); eqpad.id = "eqpad"
 
         scope = Scope(eng); scope.id = "scope"; scope.border_title = "osciloscopio"
         envviz = EnvViz(eng); envviz.id = "envviz"; envviz.border_title = "envolvente"
@@ -1056,14 +1153,8 @@ class SynthApp(App):
                 yield Horizontal(osc, filt, lfo, classes="rackrow rack-synth")
                 yield Horizontal(ampenv, fltenv, ampvol, layer, classes="rackrow rack-synth")
                 yield Horizontal(drumctl, drumenv, drumvol, classes="rackrow", id="rack-drum")
-                yield Horizontal(scope, envviz, classes="visrow")
+                yield Horizontal(scope, envviz, eqpad, classes="visrow")
                 yield piano
-            with TabPane("eq", id="tab-eq"):
-                yield Horizontal(eqpanel, classes="rackrow")
-                yield eqviz
-                yield Static("  el cutoff (tab synth) sigue barriendo la curva; "
-                             "las bandas suben o bajan cada zona · edita la capa "
-                             "elegida en A/B", id="eq-help")
             with TabPane("secuenciador", id="tab-seq"):
                 yield grid
                 yield Static("", id="seqbar")
@@ -1148,7 +1239,7 @@ class SynthApp(App):
         try:
             self.query_one("#envviz").refresh()
             self.query_one("#lfoviz").refresh()
-            self.query_one("#eqviz").refresh()
+            self.query_one("#eqpad").refresh()
         except Exception:  # noqa: BLE001
             pass
 
@@ -1186,8 +1277,6 @@ class SynthApp(App):
             if event.pane.id == "tab-seq":
                 self.query_one("#seqgrid").focus()
                 self.update_seq_status()
-            elif event.pane.id == "tab-eq":
-                self.query_one("#eqviz").refresh()
             elif event.pane.id == "tab-presets":
                 self.query_one("#preset-list", PresetList).reload()
             elif event.pane.id == "tab-tonal":
@@ -1331,12 +1420,12 @@ class SynthApp(App):
             if env_sig != self._last_env:
                 self._last_env = env_sig
                 self.query_one("#envviz").refresh()
-            # repintar la curva del eq cuando cambia el cutoff, la resonancia o
-            # una banda: ahí se VE al cutoff arrastrando los niveles
+            # repintar el eq cuando cambia el cutoff, la resonancia o una
+            # banda: ahí se VE al cutoff arrastrando los niveles
             eq_sig = (p.cutoff, p.resonance, tuple(p.eq))
             if eq_sig != self._last_eq:
                 self._last_eq = eq_sig
-                self.query_one("#eqviz").refresh()
+                self.query_one("#eqpad").refresh()
         except Exception:  # noqa: BLE001
             pass
         self._update_status()

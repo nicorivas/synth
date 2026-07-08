@@ -23,10 +23,11 @@ La primera vez `uv` arma el entorno solo (numpy, scipy, sounddevice, textual).
   presets y las canciones guardan las dos capas. Cada capa tiene su propia
   **afinación** (`Semi` en semitonos, `Fine` en cents): la B puede ir una
   octava o una quinta arriba, o apenas corrida para engordar el unísono.
-- **Ecualizador por capa** (tab "eq"): 8 bandas de octava (63 Hz–8 kHz), cada
-  una con su ganancia (±12 dB), después del filtro. El cutoff sigue barriendo
-  la curva —con su envolvente y LFO— y tú decides qué frecuencias suben, se
-  quedan o bajan. La curva de respuesta (pasa-bajos × EQ) se dibuja en vivo.
+- **Ecualizador por capa**, en la pantalla principal (junto al osciloscopio):
+  8 bandas de octava (63 Hz–8 kHz) de ±12 dB después del filtro, como barras
+  clickeables/arrastrables (o ←→ y ↑↓ con el foco) sobre la curva de respuesta
+  total. El cutoff sigue barriendo esa curva —con su envolvente y LFO— y tú
+  decides qué frecuencias suben, se quedan o bajan.
 - **Osciloscopio** en vivo (braille).
 - **Piano** de dos octavas, clickeable.
 - **Presets**: guardar y recuperar la foto completa (el sonido de todos los

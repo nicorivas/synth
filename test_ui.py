@@ -6,7 +6,6 @@ import asyncio
 import numpy as np
 
 import engine as E
-from textual.widgets import TabbedContent
 from ui import SynthApp
 
 
@@ -43,17 +42,15 @@ async def main():
         app.engine.panic()
         app._kbd.clear()
 
-        # 1c) tab eq: mover una banda escribe en el patch del instrumento
-        app.query_one(TabbedContent).active = "tab-eq"
+        # 1c) el eq de la pantalla principal: flechas sobre el pad escriben
+        # la ganancia de la banda en el patch del instrumento
+        eqpad = app.query_one("#eqpad")
+        eqpad.focus()
         await pilot.pause()
-        banda_1k = next(f for f in app.query("Fader") if f.label == "1k")
-        banda_1k.focus()
-        await pilot.pause()
+        await pilot.press("right")            # banda 125
         for _ in range(4):
-            await pilot.press("up")
-        eq_ok = app.engine.params.eq[4] > 0
-        app.query_one(TabbedContent).active = "tab-synth"
-        await pilot.pause()
+            await pilot.press("up")           # +4 dB
+        eq_ok = app.engine.params.eq[1] >= 3
 
         # 2) mover el fader de cutoff con el teclado
         cutoff = next(f for f in app.query("Fader") if f.label == "Cut")
@@ -76,8 +73,8 @@ async def main():
         print("teclado dispara nota:", kbd_ok)
         assert gate_ok, "la repetición tras el gate re-atacó la nota (doble ataque)"
         print("gate + repetición = un solo ataque (legato):", gate_ok)
-        assert eq_ok, "el fader del eq no escribió en params.eq"
-        print("tab eq: la banda de 1k escribe en el patch:", eq_ok)
+        assert eq_ok, "el pad del eq no escribió en params.eq"
+        print("eq en pantalla principal: la banda escribe en el patch:", eq_ok)
         print("cutoff tras 6 abajo:", round(app.engine.params.cutoff, 1))
         print("acorde activo:", app.engine.active_notes())
         print("scope no plano:", bool(np.any(np.abs(app.engine.scope) > 0.001)))
